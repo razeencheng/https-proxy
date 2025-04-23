@@ -1,0 +1,63 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+https-proxy
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux trash files
+.Trash-*
+
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Certificate files
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+*.p12
+
+# Configuration files with sensitive data
+/config.json
+/certs/
+
+# Logs and statistics
+/stats/
+/logs/
+*.log
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build directories
+/bin/
+/dist/ 
+
+.cursor/

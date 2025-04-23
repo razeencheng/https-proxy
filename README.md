@@ -1,93 +1,240 @@
 # HTTPS PROXY
 
+A secure HTTPS proxy server that requires clients to authenticate using client certificates, with administration panel and statistics tracking.
 
+## Features
 
-## Getting started
+- Uses client certificates to authenticate clients
+- Verifies client certificate chain against trusted CA
+- Verifies certificate is intended for client authentication (using KeyUsage)
+- Tracks user traffic statistics by client certificate CommonName
+- Provides a web-based admin panel for monitoring user traffic
+- Bilingual interface with English/Chinese language support
+- Handles unauthorized requests with appropriate responses
+- Configurable via JSON configuration file
+- Available as a system service for Linux (systemd) and macOS
+- Docker support for containerized deployment
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Getting Started
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+### Prerequisites
 
-## Add your files
+- Go 1.19 or higher (for building from source)
+- OpenSSL (for generating certificates)
+- Linux with systemd or macOS (for service installation)
+- Docker and Docker Compose (optional, for containerized deployment)
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### Quick Setup
 
+For local development and testing, use the quick setup script:
+
+```bash
+# Clone the repository
+git clone https://git.isw.app/homelab/https-proxy.git
+cd https-proxy
+
+# Run the quick setup script
+./scripts/quick_setup.sh
 ```
-cd existing_repo
-git remote add origin https://git.isw.app/homelab/https-proxy.git
-git branch -M main
-git push -uf origin main
+
+This script will:
+1. Generate self-signed certificates if they don't exist
+2. Create a default configuration file
+3. Build the application
+4. Optionally start the proxy
+
+### Easy Installation
+
+The easiest way to install the latest release is by using our installer script:
+
+```bash
+# For Linux (requires sudo)
+curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts/install.sh | sudo bash
+
+# For macOS (requires sudo)
+curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts/install.sh | sudo bash
 ```
 
-## Integrate with your tools
+This script automatically:
+1. Detects your operating system and architecture
+2. Downloads the latest release binary
+3. Installs the proxy as a system service
+4. Creates default configuration and certificate directories
 
-- [ ] [Set up project integrations](https://git.isw.app/homelab/https-proxy/-/settings/integrations)
+### Manual Installation as a Service
 
-## Collaborate with your team
+If you prefer to install manually:
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+#### Linux (systemd)
 
-## Test and Deploy
+```bash
+# Download and extract the latest release manually, then run:
+sudo ./deploy/install_linux.sh
+```
 
-Use the built-in continuous integration in GitLab.
+#### macOS
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```bash
+# Download and extract the latest release manually, then run:
+sudo ./deploy/install_macos.sh
+```
 
-***
+For more details, see the [deployment guide](deploy/README.md).
 
-# Editing this README
+### Docker Deployment
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+# Build and start the container
+docker-compose up -d
 
-## Suggestions for a good README
+# View logs
+docker-compose logs -f
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Authentication Process
 
-## Name
-Choose a self-explaining name for your project.
+The proxy performs certificate verification:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+1. **Certificate Chain Verification**: Ensures the client certificate is signed by the trusted CA certificate specified in the configuration.
+2. **Certificate Usage Verification**: Ensures the certificate is intended for client authentication.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Only clients passing the verification steps are authorized to use the proxy for CONNECT requests.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Configuration
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+The proxy is configured through a JSON configuration file. You can use the sample configuration as a starting point:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```bash
+cp config.sample.json config.json
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+### Configuration Structure
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```json
+{
+  "server": {
+    "address": "0.0.0.0:8443",
+    "cert_file": "./certs/cert.pem",
+    "key_file": "./certs/key.pem",
+    "language": "en"
+  },
+  "proxy": {
+    "trust_root_file": "./certs/trustroot.pem",
+    "auth_required": true
+  },
+  "stats": {
+    "enabled": true,
+    "save_interval": 300,
+    "file_path": "./stats/proxy_stats.json"
+  },
+  "admin": {
+    "enabled": true,
+    "address": "127.0.0.1:8444",
+    "cert_file": "./certs/admin_cert.pem",
+    "key_file": "./certs/admin_key.pem"
+  }
+}
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+See the [user manual](docs/user_manual.md) for detailed configuration options.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## User Statistics
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+The proxy tracks usage statistics for authenticated users:
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+- Users are identified by their certificate's Subject CommonName
+- Traffic volume (bytes) is tracked in real-time
+- Connection counts and request counts are maintained
+- Statistics are saved to a JSON file periodically (configurable)
+- Statistics are preserved between server restarts
+
+## Admin Panel
+
+The admin panel provides visibility into the proxy's operations:
+
+- Displays real-time user statistics and connection details
+- Provides per-user detailed views with usage graphs
+- Supports language switching between English and Chinese
+- Offers REST API endpoints for integration with other systems
+- Auto-refreshes data periodically
+
+### Admin Panel API Endpoints
+
+- `GET /api/stats`: Get statistics for all users
+- `GET /api/stats/user/{username}`: Get statistics for a specific user
+- `GET /api/config`: Get server configuration information
+
+All API endpoints require client certificate authentication.
+
+## Certificate Management
+
+For testing purposes, you can generate self-signed certificates:
+
+```bash
+./scripts/generate_certs.sh
+```
+
+This will create:
+- A self-signed CA certificate
+- A server certificate for the proxy
+- An admin server certificate
+- A client certificate for testing
+
+For production use, you should use certificates from a trusted Certificate Authority or your organization's internal CA.
+
+## Uninstallation
+
+### Linux
+
+```bash
+sudo ./deploy/uninstall_linux.sh
+```
+
+### macOS
+
+```bash
+sudo ./deploy/uninstall_macos.sh
+```
+
+## Docker Management
+
+```bash
+# Start the service
+docker-compose up -d
+
+# Stop the service
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# Rebuild and restart
+docker-compose up -d --build
+```
+
+## Creating New Releases
+
+This project uses GitHub Actions to automatically build and release binaries. To create a new release:
+
+1. Tag the commit you want to release:
+   ```bash
+   git tag -a v1.0.0 -m "Version 1.0.0"
+   ```
+
+2. Push the tag to GitHub:
+   ```bash
+   git push github v1.0.0
+   ```
+
+3. The GitHub Action will automatically:
+   - Build binaries for multiple platforms (Linux, macOS, Windows)
+   - Create a GitHub Release with the binaries attached
+   - Make the release available for download
+
+## Troubleshooting
+
+See the [user manual](docs/user_manual.md) for common issues and troubleshooting steps.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+This software is provided under the terms of the MIT License.

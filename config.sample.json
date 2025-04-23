@@ -1,0 +1,23 @@
+{
+  "server": {
+    "address": "0.0.0.0:8443",
+    "cert_file": "./certs/cert.pem",
+    "key_file": "./certs/key.pem",
+    "language": "en"
+  },
+  "proxy": {
+    "trust_root_file": "./certs/trustroot.pem",
+    "auth_required": true
+  },
+  "stats": {
+    "enabled": true,
+    "save_interval": 300,
+    "file_path": "./stats/proxy_stats.json"
+  },
+  "admin": {
+    "enabled": true,
+    "address": "127.0.0.1:8444",
+    "cert_file": "./certs/admin_cert.pem",
+    "key_file": "./certs/admin_key.pem"
+  }
+} 

@@ -1,0 +1,78 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.19'
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          OUTPUT_NAME=https-proxy
+          if [ "$GOOS" = "windows" ]; then
+            OUTPUT_NAME=https-proxy.exe
+          fi
+          go build -v -o $OUTPUT_NAME
+          
+          # Create archive
+          ARCHIVE_NAME=https-proxy-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "$GOOS" = "windows" ]; then
+            zip -r $ARCHIVE_NAME.zip $OUTPUT_NAME
+          else
+            tar -czvf $ARCHIVE_NAME.tar.gz $OUTPUT_NAME
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: https-proxy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            https-proxy*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v2
+        
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            **/https-proxy-${{ github.ref_name }}-*.tar.gz
+            **/https-proxy-${{ github.ref_name }}-*.zip 

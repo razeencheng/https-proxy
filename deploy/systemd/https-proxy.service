@@ -1,0 +1,23 @@
+[Unit]
+Description=HTTPS Proxy Server
+After=network.target
+
+[Service]
+Type=simple
+User=https-proxy
+Group=https-proxy
+WorkingDirectory=/opt/https-proxy
+ExecStart=/opt/https-proxy/https-proxy --config /etc/https-proxy/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security enhancements
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/https-proxy/stats
+
+[Install]
+WantedBy=multi-user.target 

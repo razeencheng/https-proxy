@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .refresh-time {
+            font-size: 0.8em;
+            color: #7f8c8d;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .user-link {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .user-link:hover {
+            text-decoration: underline;
+        }
+        .stats-summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            flex: 1;
+            min-width: 200px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 15px;
+        }
+        .stat-title {
+            font-size: 0.9em;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .refresh-btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover {
+            background-color: #2980b9;
+        }
+        .language-switcher {
+            margin-bottom: 15px;
+            text-align: right;
+        }
+        .language-link {
+            color: #3498db;
+            text-decoration: none;
+            margin-left: 10px;
+            font-size: 14px;
+        }
+        .language-link:hover {
+            text-decoration: underline;
+        }
+        .current-lang {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        @media (max-width: 768px) {
+            .stat-card {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="language-switcher">
+            {{if eq .Language "en"}}
+                <span class="current-lang">English</span>
+                <a href="?lang=zh" class="language-link">中文</a>
+            {{else}}
+                <a href="?lang=en" class="language-link">English</a>
+                <span class="current-lang">中文</span>
+            {{end}}
+        </div>
+        
+        <div class="header">
+            <h1>{{if eq .Language "en"}}HTTPS Proxy Admin Panel{{else}}HTTPS 代理管理面板{{end}}</h1>
+            <div>
+                <button class="refresh-btn" onclick="window.location.reload()">{{if eq .Language "en"}}Refresh Data{{else}}刷新数据{{end}}</button>
+                <div class="refresh-time">{{if eq .Language "en"}}Last Updated:{{else}}最后更新:{{end}} {{.LastUpdated.Format "2006-01-02 15:04:05"}}</div>
+            </div>
+        </div>
+
+        <div class="stats-summary">
+            <div class="stat-card">
+                <div class="stat-title">{{if eq .Language "en"}}Active Users{{else}}活跃用户数{{end}}</div>
+                <div class="stat-value">{{len .Users}}</div>
+            </div>
+            
+            {{$totalBytes := 0}}
+            {{$totalConnections := 0}}
+            {{range .Users}}
+                {{$totalBytes = add $totalBytes .TotalBytes}}
+                {{$totalConnections = add $totalConnections .ConnectionCount}}
+            {{end}}
+            
+            <div class="stat-card">
+                <div class="stat-title">{{if eq .Language "en"}}Total Traffic{{else}}总流量{{end}}</div>
+                <div class="stat-value">{{formatBytes $totalBytes}}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-title">{{if eq .Language "en"}}Total Connections{{else}}总连接数{{end}}</div>
+                <div class="stat-value">{{$totalConnections}}</div>
+            </div>
+        </div>
+
+        <h2>{{if eq .Language "en"}}User Statistics{{else}}用户统计{{end}}</h2>
+        
+        {{if eq (len .Users) 0}}
+            <p>{{if eq .Language "en"}}No user data available{{else}}暂无用户数据{{end}}</p>
+        {{else}}
+            <table>
+                <thead>
+                    <tr>
+                        <th>{{if eq .Language "en"}}Username{{else}}用户名{{end}}</th>
+                        <th>{{if eq .Language "en"}}Total Traffic{{else}}总流量{{end}}</th>
+                        <th>{{if eq .Language "en"}}Connections{{else}}连接次数{{end}}</th>
+                        <th>{{if eq .Language "en"}}Requests{{else}}请求次数{{end}}</th>
+                        <th>{{if eq .Language "en"}}Last Access{{else}}最后访问{{end}}</th>
+                        <th>{{if eq .Language "en"}}First Connection{{else}}首次连接{{end}}</th>
+                        <th>{{if eq .Language "en"}}Status{{else}}状态{{end}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Users}}
+                    <tr>
+                        <td><a href="/user/{{.Username}}{{if ne $.Language "en"}}?lang=zh{{end}}" class="user-link">{{.Username}}</a></td>
+                        <td>{{formatBytes .TotalBytes}}</td>
+                        <td>{{.ConnectionCount}}</td>
+                        <td>{{.RequestsCount}}</td>
+                        <td>{{.LastAccess.Format "2006-01-02 15:04:05"}}</td>
+                        <td>{{.ConnectedSince.Format "2006-01-02 15:04:05"}}</td>
+                        <td>
+                            {{if .Disabled}}
+                            <span style="color: #e74c3c; font-weight: bold;">{{if eq $.Language "en"}}Disabled{{else}}已禁用{{end}}</span>
+                            {{else}}
+                            <span style="color: #2ecc71; font-weight: bold;">{{if eq $.Language "en"}}Active{{else}}正常{{end}}</span>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        {{end}}
+        
+        <div style="margin-top: 30px; text-align: center; font-size: 0.8em; color: #7f8c8d;">
+            {{if eq .Language "en"}}HTTPS Proxy Admin Panel - Server Port: {{.Config.Server.Port}} - Admin Port: {{.Config.Admin.Port}}{{else}}HTTPS 代理管理面板 - 服务器端口: {{.Config.Server.Port}} - 管理面板端口: {{.Config.Admin.Port}}{{end}}
+        </div>
+    </div>
+
+    <script>
+        // Helper function for calculating total traffic and connections
+        function add(a, b) {
+            return a + b;
+        }
+        
+        // Auto-refresh the page after 30 seconds
+        setTimeout(function() {
+            window.location.reload();
+        }, 30000);
+    </script>
+</body>
+</html> 
