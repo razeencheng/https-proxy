@@ -38,7 +38,10 @@ jobs:
           if [ "$GOOS" = "windows" ]; then
             OUTPUT_NAME=https-proxy.exe
           fi
-          go build -v -o $OUTPUT_NAME
+          go build -v -ldflags="-w -s" -o $OUTPUT_NAME
+          
+          # 显示二进制文件大小
+          ls -lh $OUTPUT_NAME
           
           # Create archive
           ARCHIVE_NAME=https-proxy-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}

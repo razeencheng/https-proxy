@@ -1,51 +1,36 @@
-# HTTPS PROXY
+# HTTPS Proxy | HTTPS 代理
 
-A secure HTTPS proxy server that requires clients to authenticate using client certificates, with administration panel and statistics tracking.
+<p align="center">
+  <a href="#english">English</a> | <a href="#chinese">中文</a>
+</p>
+
+<a name="english"></a>
+
+## Overview
+
+HTTPS Proxy is a secure, certificate-based authentication proxy server for controlling and monitoring HTTPS connections. It provides detailed traffic statistics and an admin dashboard for real-time monitoring.
+
+![Admin Dashboard](docs/images/admin_dashboard.png)
 
 ## Features
 
-- Uses client certificates to authenticate clients
-- Verifies client certificate chain against trusted CA
-- Verifies certificate is intended for client authentication (using KeyUsage)
-- Tracks user traffic statistics by client certificate CommonName
-- Provides a web-based admin panel for monitoring user traffic
-- Bilingual interface with English/Chinese language support
-- Handles unauthorized requests with appropriate responses
-- Configurable via JSON configuration file
-- Available as a system service for Linux (systemd) and macOS
-- Docker support for containerized deployment
+- ✅ Client certificate-based authentication
+- ✅ TLS certificate chain verification against trusted CA
+- ✅ Certificate usage verification for client authentication
+- ✅ Detailed user traffic statistics tracking
+- ✅ Web-based admin dashboard
+- ✅ Bilingual interface (English/Chinese)
+- ✅ Multiple deployment options (service, Docker)
+- ✅ Cross-platform support (Linux, macOS, Windows)
 
-## Getting Started
+## Installation
 
 ### Prerequisites
 
 - Go 1.19 or higher (for building from source)
-- OpenSSL (for generating certificates)
-- Linux with systemd or macOS (for service installation)
-- Docker and Docker Compose (optional, for containerized deployment)
+- OpenSSL (for certificate generation)
 
-### Quick Setup
-
-For local development and testing, use the quick setup script:
-
-```bash
-# Clone the repository
-git clone https://git.isw.app/homelab/https-proxy.git
-cd https-proxy
-
-# Run the quick setup script
-./scripts/quick_setup.sh
-```
-
-This script will:
-1. Generate self-signed certificates if they don't exist
-2. Create a default configuration file
-3. Build the application
-4. Optionally start the proxy
-
-### Easy Installation
-
-The easiest way to install the latest release is by using our installer script:
+### Quick Install with Script
 
 ```bash
 # For Linux (requires sudo)
@@ -55,58 +40,33 @@ curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts
 curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts/install.sh | sudo bash
 ```
 
-This script automatically:
-1. Detects your operating system and architecture
-2. Downloads the latest release binary
-3. Installs the proxy as a system service
-4. Creates default configuration and certificate directories
+### Manual Installation
 
-### Manual Installation as a Service
-
-If you prefer to install manually:
-
-#### Linux (systemd)
+1. Download the latest release for your platform from [GitHub Releases](https://github.com/razeencheng/https-proxy/releases)
+2. Extract the archive and run the installation script:
 
 ```bash
-# Download and extract the latest release manually, then run:
+# Linux
 sudo ./deploy/install_linux.sh
-```
 
-#### macOS
-
-```bash
-# Download and extract the latest release manually, then run:
+# macOS
 sudo ./deploy/install_macos.sh
 ```
-
-For more details, see the [deployment guide](deploy/README.md).
 
 ### Docker Deployment
 
 ```bash
+# Clone the repository
+git clone https://github.com/razeencheng/https-proxy.git
+cd https-proxy
+
 # Build and start the container
 docker-compose up -d
-
-# View logs
-docker-compose logs -f
 ```
-
-## Authentication Process
-
-The proxy performs certificate verification:
-
-1. **Certificate Chain Verification**: Ensures the client certificate is signed by the trusted CA certificate specified in the configuration.
-2. **Certificate Usage Verification**: Ensures the certificate is intended for client authentication.
-
-Only clients passing the verification steps are authorized to use the proxy for CONNECT requests.
 
 ## Configuration
 
-The proxy is configured through a JSON configuration file. You can use the sample configuration as a starting point:
-
-```bash
-cp config.sample.json config.json
-```
+The configuration is stored in `config.json` (development) or `/etc/https-proxy/config.json` (production).
 
 ### Configuration Structure
 
@@ -136,105 +96,282 @@ cp config.sample.json config.json
 }
 ```
 
-See the [user manual](docs/user_manual.md) for detailed configuration options.
+### Key Configuration Options
 
-## User Statistics
-
-The proxy tracks usage statistics for authenticated users:
-
-- Users are identified by their certificate's Subject CommonName
-- Traffic volume (bytes) is tracked in real-time
-- Connection counts and request counts are maintained
-- Statistics are saved to a JSON file periodically (configurable)
-- Statistics are preserved between server restarts
-
-## Admin Panel
-
-The admin panel provides visibility into the proxy's operations:
-
-- Displays real-time user statistics and connection details
-- Provides per-user detailed views with usage graphs
-- Supports language switching between English and Chinese
-- Offers REST API endpoints for integration with other systems
-- Auto-refreshes data periodically
-
-### Admin Panel API Endpoints
-
-- `GET /api/stats`: Get statistics for all users
-- `GET /api/stats/user/{username}`: Get statistics for a specific user
-- `GET /api/config`: Get server configuration information
-
-All API endpoints require client certificate authentication.
+| Section | Option | Description |
+|---------|--------|-------------|
+| server | address | Proxy server listening address and port |
+| server | language | UI language: 'en' for English, 'zh' for Chinese |
+| proxy | auth_required | Enable/disable client certificate verification |
+| stats | save_interval | How often to save statistics (seconds) |
+| admin | address | Admin dashboard listening address and port |
 
 ## Certificate Management
 
-For testing purposes, you can generate self-signed certificates:
+For testing, generate self-signed certificates:
 
 ```bash
 ./scripts/generate_certs.sh
 ```
 
-This will create:
-- A self-signed CA certificate
-- A server certificate for the proxy
-- An admin server certificate
-- A client certificate for testing
+This creates:
+- CA certificate (ca.pem)
+- Server certificates (cert.pem/key.pem)
+- Admin certificates (admin_cert.pem/admin_key.pem)
+- Client certificate (client.pem/client.key)
+- Browser-importable PKCS#12 file (client.p12)
 
-For production use, you should use certificates from a trusted Certificate Authority or your organization's internal CA.
+For production, use your trusted CA certificates.
+
+## Using the Proxy
+
+### Client Setup
+
+1. Import the client certificate (client.p12) into your browser
+2. Configure your browser to use the proxy (default: localhost:8443)
+3. When prompted, select your client certificate
+
+### Admin Dashboard
+
+Access the admin dashboard at https://localhost:8444 (or configured address).
+
+The dashboard provides:
+
+- Real-time connection statistics
+- Per-user traffic monitoring
+- Historical data visualization
+
+![User Details](docs/images/user_details.png)
+
+## API Reference
+
+The admin panel provides the following API endpoints:
+
+- `GET /api/stats`: Get statistics for all users
+- `GET /api/stats/user/{username}`: Get statistics for a specific user
+- `GET /api/config`: Get server configuration
 
 ## Uninstallation
 
-### Linux
-
 ```bash
+# Linux
 sudo ./deploy/uninstall_linux.sh
-```
 
-### macOS
-
-```bash
+# macOS
 sudo ./deploy/uninstall_macos.sh
 ```
 
-## Docker Management
+## Development
+
+### Building from Source
 
 ```bash
-# Start the service
-docker-compose up -d
+# Clone the repository
+git clone https://github.com/razeencheng/https-proxy.git
+cd https-proxy
 
-# Stop the service
-docker-compose down
+# Build the binary
+go build -ldflags="-w -s" -o https-proxy
 
-# View logs
-docker-compose logs -f
-
-# Rebuild and restart
-docker-compose up -d --build
+# Run with default config
+./https-proxy
 ```
 
-## Creating New Releases
+### Creating Releases
 
-This project uses GitHub Actions to automatically build and release binaries. To create a new release:
+This project uses GitHub Actions to automatically build and release binaries:
 
-1. Tag the commit you want to release:
-   ```bash
-   git tag -a v1.0.0 -m "Version 1.0.0"
-   ```
-
-2. Push the tag to GitHub:
-   ```bash
-   git push github v1.0.0
-   ```
-
-3. The GitHub Action will automatically:
-   - Build binaries for multiple platforms (Linux, macOS, Windows)
-   - Create a GitHub Release with the binaries attached
-   - Make the release available for download
-
-## Troubleshooting
-
-See the [user manual](docs/user_manual.md) for common issues and troubleshooting steps.
+1. Tag the commit: `git tag -a v1.0.0 -m "Version 1.0.0"`
+2. Push the tag: `git push origin v1.0.0`
 
 ## License
 
 This software is provided under the terms of the MIT License.
+
+---
+
+<a name="chinese"></a>
+
+# HTTPS 代理
+
+## 概述
+
+HTTPS 代理是一个安全的基于证书认证的代理服务器，用于控制和监控 HTTPS 连接。它提供详细的流量统计和管理员仪表板，以进行实时监控。
+
+![管理员仪表板](docs/images/admin_dashboard.png)
+
+## 特性
+
+- ✅ 基于客户端证书的身份验证
+- ✅ 对受信任 CA 的 TLS 证书链验证
+- ✅ 针对客户端身份验证的证书用途验证
+- ✅ 详细的用户流量统计跟踪
+- ✅ 基于 Web 的管理仪表板
+- ✅ 双语界面（英文/中文）
+- ✅ 多种部署选项（系统服务、Docker）
+- ✅ 跨平台支持（Linux、macOS、Windows）
+
+## 安装
+
+### 前提条件
+
+- Go 1.19 或更高版本（用于从源代码构建）
+- OpenSSL（用于证书生成）
+
+### 使用脚本快速安装
+
+```bash
+# Linux（需要 sudo）
+curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts/install.sh | sudo bash
+
+# macOS（需要 sudo）
+curl -sSL https://raw.githubusercontent.com/razeencheng/https-proxy/main/scripts/install.sh | sudo bash
+```
+
+### 手动安装
+
+1. 从 [GitHub Releases](https://github.com/razeencheng/https-proxy/releases) 下载适合您平台的最新版本
+2. 解压缩归档文件并运行安装脚本：
+
+```bash
+# Linux
+sudo ./deploy/install_linux.sh
+
+# macOS
+sudo ./deploy/install_macos.sh
+```
+
+### Docker 部署
+
+```bash
+# 克隆仓库
+git clone https://github.com/razeencheng/https-proxy.git
+cd https-proxy
+
+# 构建并启动容器
+docker-compose up -d
+```
+
+## 配置
+
+配置存储在 `config.json`（开发环境）或 `/etc/https-proxy/config.json`（生产环境）中。
+
+### 配置结构
+
+```json
+{
+  "server": {
+    "address": "0.0.0.0:8443",
+    "cert_file": "./certs/cert.pem",
+    "key_file": "./certs/key.pem",
+    "language": "en"
+  },
+  "proxy": {
+    "trust_root_file": "./certs/trustroot.pem",
+    "auth_required": true
+  },
+  "stats": {
+    "enabled": true,
+    "save_interval": 300,
+    "file_path": "./stats/proxy_stats.json"
+  },
+  "admin": {
+    "enabled": true,
+    "address": "127.0.0.1:8444",
+    "cert_file": "./certs/admin_cert.pem",
+    "key_file": "./certs/admin_key.pem"
+  }
+}
+```
+
+### 主要配置选项
+
+| 部分 | 选项 | 描述 |
+|------|------|------|
+| server | address | 代理服务器监听地址和端口 |
+| server | language | UI 语言：'en' 为英文，'zh' 为中文 |
+| proxy | auth_required | 启用/禁用客户端证书验证 |
+| stats | save_interval | 保存统计数据的频率（秒） |
+| admin | address | 管理仪表板监听地址和端口 |
+
+## 证书管理
+
+对于测试，生成自签名证书：
+
+```bash
+./scripts/generate_certs.sh
+```
+
+这将创建：
+- CA 证书 (ca.pem)
+- 服务器证书 (cert.pem/key.pem)
+- 管理员证书 (admin_cert.pem/admin_key.pem)
+- 客户端证书 (client.pem/client.key)
+- 可导入浏览器的 PKCS#12 文件 (client.p12)
+
+对于生产环境，使用您的受信任 CA 证书。
+
+## 使用代理
+
+### 客户端设置
+
+1. 将客户端证书 (client.p12) 导入到您的浏览器中
+2. 配置您的浏览器使用代理（默认：localhost:8443）
+3. 提示时，选择您的客户端证书
+
+### 管理仪表板
+
+通过 https://localhost:8444（或配置的地址）访问管理仪表板。
+
+仪表板提供：
+
+- 实时连接统计
+- 按用户流量监控
+- 历史数据可视化
+
+![用户详情](docs/images/user_details.png)
+
+## API 参考
+
+管理面板提供以下 API 端点：
+
+- `GET /api/stats`：获取所有用户的统计信息
+- `GET /api/stats/user/{username}`：获取特定用户的统计信息
+- `GET /api/config`：获取服务器配置
+
+## 卸载
+
+```bash
+# Linux
+sudo ./deploy/uninstall_linux.sh
+
+# macOS
+sudo ./deploy/uninstall_macos.sh
+```
+
+## 开发
+
+### 从源代码构建
+
+```bash
+# 克隆仓库
+git clone https://github.com/razeencheng/https-proxy.git
+cd https-proxy
+
+# 构建二进制文件
+go build -ldflags="-w -s" -o https-proxy
+
+# 使用默认配置运行
+./https-proxy
+```
+
+### 创建发布版本
+
+该项目使用 GitHub Actions 自动构建和发布二进制文件：
+
+1. 标记提交：`git tag -a v1.0.0 -m "Version 1.0.0"`
+2. 推送标签：`git push origin v1.0.0`
+
+## 许可证
+
+本软件根据 MIT 许可证条款提供。
