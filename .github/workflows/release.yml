@@ -49,7 +49,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: https-proxy-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         
       - name: Display structure of downloaded files
         run: ls -R
