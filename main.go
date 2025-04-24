@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -11,7 +12,15 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
+)
+
+// 定义更大的缓冲区大小常量，用于优化数据传输性能
+const (
+	// 默认缓冲区大小为1MB
+	DefaultBufferSize = 1024 * 1024
 )
 
 // Proxy represents the HTTPS proxy server
@@ -19,6 +28,38 @@ type Proxy struct {
 	Config       *Config
 	CACertPool   *x509.CertPool // Certificate Authority certificate pool
 	StatsManager *StatsManager  // Statistics manager for tracking user activities
+}
+
+// GzipResponseWriter 提供gzip压缩支持
+type GzipResponseWriter struct {
+	io.WriteCloser
+	http.ResponseWriter
+}
+
+// Write 使用gzip压缩写入数据
+func (w *GzipResponseWriter) Write(b []byte) (int, error) {
+	return w.WriteCloser.Write(b)
+}
+
+// Close 关闭gzip写入器
+func (w *GzipResponseWriter) Close() error {
+	return w.WriteCloser.Close()
+}
+
+// NewGzipResponseWriter 创建一个新的gzip响应写入器
+func NewGzipResponseWriter(w http.ResponseWriter) *GzipResponseWriter {
+	// 设置Content-Encoding头
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Vary", "Accept-Encoding")
+
+	// 创建gzip写入器
+	gz := gzip.NewWriter(w)
+
+	// 返回包装的响应写入器
+	return &GzipResponseWriter{
+		WriteCloser:    gz,
+		ResponseWriter: w,
+	}
 }
 
 func main() {
@@ -73,6 +114,33 @@ func main() {
 			VerifyPeerCertificate: nil, // We verify certificates ourselves in ServeHTTP
 		},
 		Handler: prx,
+		// 优化HTTP服务器配置
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second, // 更长的写超时
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
+	}
+
+	// 如果配置中启用了压缩，则添加压缩中间件
+	if cfg.Server.Performance.EnableCompression {
+		// 使用压缩处理器包装原始处理器
+		compressedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 检查Accept-Encoding头是否包含gzip
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				// 创建gzip响应写入器
+				gzw := NewGzipResponseWriter(w)
+				defer gzw.Close()
+
+				// 使用gzip响应写入器
+				prx.ServeHTTP(gzw, r)
+			} else {
+				// 不支持压缩，使用原始处理器
+				prx.ServeHTTP(w, r)
+			}
+		})
+
+		server.Handler = compressedHandler
 	}
 
 	// Start the admin panel server (if configured)
@@ -233,6 +301,43 @@ func (p *Proxy) proxyUnauthorizedRequest(w http.ResponseWriter, r *http.Request)
 	io.Copy(w, resp.Body)
 }
 
+// 获取配置的缓冲区大小，如果配置中未指定，则使用默认值
+func (p *Proxy) getBufferSize() int {
+	if p.Config.Server.Performance.BufferSize > 0 {
+		return p.Config.Server.Performance.BufferSize
+	}
+	return DefaultBufferSize
+}
+
+// 获取TCP Keep Alive时间
+func (p *Proxy) getTCPKeepAlive() time.Duration {
+	if p.Config.Server.Performance.TCPKeepAlive > 0 {
+		return time.Duration(p.Config.Server.Performance.TCPKeepAlive) * time.Second
+	}
+	return 30 * time.Second
+}
+
+// 获取读缓冲区大小
+func (p *Proxy) getReadBufferSize() int {
+	if p.Config.Server.Performance.ReadBufferSize > 0 {
+		return p.Config.Server.Performance.ReadBufferSize
+	}
+	return DefaultBufferSize * 2
+}
+
+// 获取写缓冲区大小
+func (p *Proxy) getWriteBufferSize() int {
+	if p.Config.Server.Performance.WriteBufferSize > 0 {
+		return p.Config.Server.Performance.WriteBufferSize
+	}
+	return DefaultBufferSize * 2
+}
+
+// 获取是否禁用Nagle算法
+func (p *Proxy) getNoDelay() bool {
+	return p.Config.Server.Performance.NoDelay
+}
+
 // handleConnectWithStats handles CONNECT requests and tracks traffic statistics
 func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, username string) {
 	// Extract the host and port from the request URI
@@ -242,13 +347,33 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 		port = "443"
 	}
 
-	// Establish a TCP connection to the target host
-	conn, err := net.Dial("tcp4", net.JoinHostPort(host, port))
+	// 创建自定义的TCP连接配置来优化性能
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: p.getTCPKeepAlive(),
+		DualStack: true, // 启用IPv4/IPv6双栈
+	}
+
+	// 使用自定义配置的连接
+	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to connect to target host: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()
+
+	// 设置TCP参数以优化性能
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// 根据配置禁用Nagle算法
+		tcpConn.SetNoDelay(p.getNoDelay())
+		// 启用TCP保活
+		tcpConn.SetKeepAlive(true)
+		// 设置TCP保活周期
+		tcpConn.SetKeepAlivePeriod(p.getTCPKeepAlive())
+		// 增加读写缓冲区大小
+		tcpConn.SetReadBuffer(p.getReadBufferSize())
+		tcpConn.SetWriteBuffer(p.getWriteBufferSize())
+	}
 
 	// Send a 200 OK response to the client
 	hijacker, ok := w.(http.Hijacker)
@@ -267,6 +392,19 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	// Send connection established message
 	clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
 
+	// 应用客户端连接优化
+	if netConn, ok := clientConn.(*net.TCPConn); ok {
+		// 根据配置禁用Nagle算法
+		netConn.SetNoDelay(p.getNoDelay())
+		// 启用TCP保活
+		netConn.SetKeepAlive(true)
+		// 设置TCP保活周期
+		netConn.SetKeepAlivePeriod(p.getTCPKeepAlive())
+		// 增加读写缓冲区大小
+		netConn.SetReadBuffer(p.getReadBufferSize())
+		netConn.SetWriteBuffer(p.getWriteBufferSize())
+	}
+
 	// Create readers and writers for statistics tracking
 	clientReader := NewCountingReader(clientConn)
 	clientWriter := NewCountingWriter(clientConn)
@@ -277,12 +415,15 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	userClientReader := NewUserTrafficReader(p.StatsManager, username, clientReader)
 	userServerReader := NewUserTrafficReader(p.StatsManager, username, serverReader)
 
+	// 创建大缓冲区，提高拷贝性能
+	buf := make([]byte, p.getBufferSize())
+
 	// Set up traffic copying from client to server (with statistics)
 	go func() {
-		io.Copy(serverWriter, userClientReader)
+		io.CopyBuffer(serverWriter, userClientReader, buf)
 		conn.Close()
 	}()
 
 	// Set up traffic copying from server to client (with statistics)
-	io.Copy(clientWriter, userServerReader)
+	io.CopyBuffer(clientWriter, userServerReader, buf)
 }

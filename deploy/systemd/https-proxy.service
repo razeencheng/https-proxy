@@ -10,7 +10,22 @@ WorkingDirectory=/opt/https-proxy
 ExecStart=/opt/https-proxy/https-proxy --config /etc/https-proxy/config.json
 Restart=on-failure
 RestartSec=5
-LimitNOFILE=65536
+
+# 增加文件描述符限制，提高并发连接能力
+LimitNOFILE=1048576
+
+# 增加进程数限制
+LimitNPROC=65536
+
+# CPU和内存优化
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+# 为代理服务分配更多内存
+MemoryLow=512M
+MemoryMin=256M
 
 # Security enhancements
 NoNewPrivileges=true

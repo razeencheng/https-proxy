@@ -16,6 +16,15 @@ type ServerConfig struct {
 		KeyPath  string `json:"key_path"`
 		CAPath   string `json:"ca_path"`
 	} `json:"certificates"`
+	Performance struct {
+		BufferSize         int  `json:"buffer_size"`          // 缓冲区大小，以字节为单位
+		TCPKeepAlive       int  `json:"tcp_keep_alive"`       // TCP KeepAlive时间，以秒为单位
+		ReadBufferSize     int  `json:"read_buffer_size"`     // TCP读缓冲区大小
+		WriteBufferSize    int  `json:"write_buffer_size"`    // TCP写缓冲区大小
+		MaxConcurrentConns int  `json:"max_concurrent_conns"` // 最大并发连接数
+		EnableCompression  bool `json:"enable_compression"`   // 是否启用压缩
+		NoDelay            bool `json:"no_delay"`             // 是否禁用Nagle算法
+	} `json:"performance"`
 }
 
 // ProxyConfig contains the proxy settings
@@ -28,7 +37,7 @@ type ProxyConfig struct {
 type StatsConfig struct {
 	Enabled    bool   `json:"enabled"`
 	FilePath   string `json:"file_path"`
-	SavePeriod int    `json:"save_period"`
+	SavePeriod int    `json:"save_period_seconds"`
 }
 
 // AdminConfig contains admin panel settings

@@ -1,23 +1,36 @@
 {
   "server": {
-    "address": "0.0.0.0:8443",
-    "cert_file": "./certs/cert.pem",
-    "key_file": "./certs/key.pem",
-    "language": "en"
+    "port": 9443,
+    "certificates": {
+      "cert_path": "./conf/cert.pem",
+      "key_path": "./conf/key.pem",
+      "ca_path": "./conf/trustroot.pem"
+    },
+    "performance": {
+      "buffer_size": 1048576,
+      "tcp_keep_alive": 30,
+      "read_buffer_size": 2097152,
+      "write_buffer_size": 2097152,
+      "max_concurrent_conns": 1000,
+      "enable_compression": true,
+      "no_delay": true
+    }
   },
   "proxy": {
-    "trust_root_file": "./certs/trustroot.pem",
-    "auth_required": true
+    "default_site": "https://www.lapo.it"
   },
   "stats": {
     "enabled": true,
-    "save_interval": 300,
-    "file_path": "./stats/proxy_stats.json"
+    "file_path": "./stats/user_stats.json",
+    "save_period_seconds": 30
   },
   "admin": {
     "enabled": true,
-    "address": "127.0.0.1:8444",
-    "cert_file": "./certs/admin_cert.pem",
-    "key_file": "./certs/admin_key.pem"
+    "port": 9444,
+    "language": "en",
+    "interfaces": {
+      "web": true,
+      "api": true
+    }
   }
 } 
