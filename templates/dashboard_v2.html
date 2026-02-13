@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTPS Proxy Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f1117;
+            --bg-secondary: #1a1d2e;
+            --bg-card: #1e2235;
+            --bg-card-hover: #252a40;
+            --text-primary: #e4e6f0;
+            --text-secondary: #8b8fa3;
+            --text-muted: #5c6078;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --upload: #f472b6;
+            --download: #38bdf8;
+            --border: #2a2e42;
+            --radius: 12px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f0f2f5;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-hover: #f8f9fa;
+            --text-primary: #1a1d2e;
+            --text-secondary: #6b7280;
+            --text-muted: #9ca3af;
+            --accent: #4f46e5;
+            --accent-light: #6366f1;
+            --accent-glow: rgba(79, 70, 229, 0.1);
+            --border: #e5e7eb;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .logo {
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 4px;
+        }
+
+        .nav-tab {
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            border: none;
+            background: none;
+        }
+
+        .nav-tab:hover {
+            color: var(--text-primary);
+            background: var(--accent-glow);
+        }
+
+        .nav-tab.active {
+            color: var(--accent-light);
+            background: var(--accent-glow);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .theme-toggle {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            color: var(--accent-light);
+            border-color: var(--accent);
+        }
+
+        .refresh-indicator {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* KPI Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            transition: all 0.3s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: var(--accent);
+        }
+
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .kpi-value {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        .kpi-value.upload {
+            color: var(--upload);
+        }
+
+        .kpi-value.download {
+            color: var(--download);
+        }
+
+        .kpi-value.total {
+            color: var(--accent-light);
+        }
+
+        /* Chart Section */
+        .chart-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .range-selector {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 3px;
+        }
+
+        .range-btn {
+            padding: 5px 12px;
+            border-radius: 6px;
+            border: none;
+            background: none;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .range-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .range-btn.active {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 260px;
+        }
+
+        /* Two-column ranking */
+        .ranking-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 768px) {
+            .ranking-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .kpi-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .ranking-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .ranking-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ranking-item:last-child {
+            border-bottom: none;
+        }
+
+        .ranking-rank {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            background: var(--accent-glow);
+            color: var(--accent-light);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .ranking-name {
+            flex: 1;
+            font-size: 13px;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ranking-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-left: 12px;
+        }
+
+        .ranking-bar-bg {
+            width: 80px;
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            margin-left: 12px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .ranking-bar {
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-light));
+            transition: width 0.5s ease;
+        }
+
+        /* Region page */
+        #map-container {
+            height: 400px;
+            border-radius: var(--radius);
+            overflow: hidden;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .country-list {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .country-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .country-item:last-child {
+            border-bottom: none;
+        }
+
+        .country-flag {
+            font-size: 20px;
+            margin-right: 12px;
+        }
+
+        .country-name {
+            flex: 1;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .country-code {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 8px;
+        }
+
+        .country-traffic {
+            font-size: 13px;
+            font-weight: 600;
+            margin-left: 16px;
+        }
+
+        .country-bar-bg {
+            width: 120px;
+            height: 8px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+            margin-left: 16px;
+            overflow: hidden;
+        }
+
+        .country-bar {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, var(--success), #34d399);
+            transition: width 0.5s ease;
+        }
+
+        .country-pct {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-left: 12px;
+            width: 40px;
+            text-align: right;
+        }
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .empty-state-text {
+            font-size: 14px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+        }
+
+        .status-disabled {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        /* Leaflet overrides for dark theme */
+        .leaflet-container {
+            background: var(--bg-primary) !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <div class="header-left">
+            <span class="logo">⚡ HTTPS Proxy</span>
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="switchPage('overview')">Overview</button>
+                <button class="nav-tab" onclick="switchPage('regions')">Regions</button>
+            </div>
+        </div>
+        <div class="header-right">
+            <span class="refresh-indicator" id="lastUpdate"></span>
+            <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Overview Page -->
+        <div class="page active" id="page-overview">
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Upload</div>
+                    <div class="kpi-value upload" id="kpi-upload">–</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Download</div>
+                    <div class="kpi-value download" id="kpi-download">–</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Traffic</div>
+                    <div class="kpi-value total" id="kpi-total">–</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Connections</div>
+                    <div class="kpi-value" id="kpi-conns">–</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Domains</div>
+                    <div class="kpi-value" id="kpi-domains">–</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Countries</div>
+                    <div class="kpi-value" id="kpi-countries">–</div>
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="section-header">
+                    <span class="section-title">Traffic Trends</span>
+                    <div class="range-selector">
+                        <button class="range-btn" onclick="setRange('30m')">30m</button>
+                        <button class="range-btn active" onclick="setRange('1h')">1h</button>
+                        <button class="range-btn" onclick="setRange('24h')">24h</button>
+                        <button class="range-btn" onclick="setRange('7d')">7d</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+
+            <div class="ranking-grid">
+                <div class="ranking-card">
+                    <div class="section-header"><span class="section-title">Top Domains</span></div>
+                    <div id="domain-ranking"></div>
+                </div>
+                <div class="ranking-card">
+                    <div class="section-header"><span class="section-title">Users</span></div>
+                    <div id="user-ranking"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Region Page -->
+        <div class="page" id="page-regions">
+            <div id="map-container"></div>
+            <div class="country-list">
+                <div class="section-header"><span class="section-title">Country / Region Traffic</span></div>
+                <div id="country-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── State ──
+        let currentRange = '1h';
+        let trendChart = null;
+        let leafletMap = null;
+        let geoLayer = null;
+
+        // ── Helpers ──
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatNumber(n) {
+            if (!n) return '0';
+            return n.toLocaleString();
+        }
+
+        function countryCodeToEmoji(code) {
+            if (!code || code.length !== 2) return '🌐';
+            return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+        }
+
+        // ── Theme ──
+        function toggleTheme() {
+            const html = document.documentElement;
+            const isDark = html.getAttribute('data-theme') !== 'light';
+            html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+            document.getElementById('themeBtn').textContent = isDark ? '☀️' : '🌙';
+            localStorage.setItem('theme', isDark ? 'light' : 'dark');
+            if (trendChart) updateChartTheme();
+        }
+
+        function initTheme() {
+            const saved = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', saved);
+            document.getElementById('themeBtn').textContent = saved === 'dark' ? '🌙' : '☀️';
+        }
+
+        // ── Page Navigation ──
+        function switchPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('page-' + page).classList.add('active');
+            event.target.classList.add('active');
+            if (page === 'regions' && !leafletMap) initMap();
+            if (page === 'regions') loadCountries();
+        }
+
+        // ── API ──
+        async function fetchJSON(url) {
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                return data.success ? data.data : null;
+            } catch (e) { console.error('Fetch error:', url, e); return null; }
+        }
+
+        // ── Overview ──
+        async function loadOverview() {
+            const data = await fetchJSON('/api/v2/overview');
+            if (!data) return;
+            document.getElementById('kpi-upload').textContent = formatBytes(data.total_upload);
+            document.getElementById('kpi-download').textContent = formatBytes(data.total_download);
+            document.getElementById('kpi-total').textContent = formatBytes(data.total_upload + data.total_download);
+            document.getElementById('kpi-conns').textContent = formatNumber(data.total_connections);
+            document.getElementById('kpi-domains').textContent = formatNumber(data.domain_count);
+            document.getElementById('kpi-countries').textContent = formatNumber(data.country_count);
+            document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        }
+
+        // ── Trends Chart ──
+        function updateChartTheme() {
+            const style = getComputedStyle(document.documentElement);
+            const gridColor = style.getPropertyValue('--border').trim();
+            const textColor = style.getPropertyValue('--text-muted').trim();
+            if (trendChart) {
+                trendChart.options.scales.x.ticks.color = textColor;
+                trendChart.options.scales.y.ticks.color = textColor;
+                trendChart.options.scales.x.grid.color = gridColor;
+                trendChart.options.scales.y.grid.color = gridColor;
+                trendChart.update('none');
+            }
+        }
+
+        async function loadTrends() {
+            const data = await fetchJSON('/api/v2/trends?range=' + currentRange);
+            const style = getComputedStyle(document.documentElement);
+            const gridColor = style.getPropertyValue('--border').trim();
+            const textColor = style.getPropertyValue('--text-muted').trim();
+
+            const labels = (data || []).map(d => {
+                const t = d.time;
+                return t.substring(11, 16); // HH:MM
+            });
+            const uploads = (data || []).map(d => d.upload || 0);
+            const downloads = (data || []).map(d => d.download || 0);
+
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            if (trendChart) trendChart.destroy();
+
+            trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Upload',
+                            data: uploads,
+                            borderColor: '#f472b6',
+                            backgroundColor: 'rgba(244,114,182,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'Download',
+                            data: downloads,
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56,189,248,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, labels: { color: textColor, usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 12 } } },
+                        tooltip: {
+                            backgroundColor: 'rgba(30,34,53,0.95)',
+                            titleColor: '#e4e6f0',
+                            bodyColor: '#8b8fa3',
+                            borderColor: '#2a2e42',
+                            borderWidth: 1,
+                            padding: 12,
+                            callbacks: { label: ctx => ctx.dataset.label + ': ' + formatBytes(ctx.raw) }
+                        }
+                    },
+                    scales: {
+                        x: { grid: { color: gridColor, drawBorder: false }, ticks: { color: textColor, maxTicksLimit: 12, font: { size: 11 } } },
+                        y: { grid: { color: gridColor, drawBorder: false }, ticks: { color: textColor, font: { size: 11 }, callback: v => formatBytes(v) }, beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function setRange(r) {
+            currentRange = r;
+            document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            loadTrends();
+        }
+
+        // ── Domain Ranking ──
+        async function loadDomains() {
+            const data = await fetchJSON('/api/v2/domains?limit=10');
+            const container = document.getElementById('domain-ranking');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-text">No domain data yet</div></div>';
+                return;
+            }
+            const maxTraffic = data[0].upload + data[0].download;
+            container.innerHTML = data.map((d, i) => {
+                const total = d.upload + d.download;
+                const pct = maxTraffic > 0 ? (total / maxTraffic * 100) : 0;
+                return `<div class="ranking-item">
+                <span class="ranking-rank">${i + 1}</span>
+                <span class="ranking-name">${d.domain}</span>
+                <span class="ranking-value">${formatBytes(total)}</span>
+                <div class="ranking-bar-bg"><div class="ranking-bar" style="width:${pct}%"></div></div>
+            </div>`;
+            }).join('');
+        }
+
+        // ── User Ranking ──
+        async function loadUsers() {
+            const data = await fetchJSON('/api/v2/users');
+            const container = document.getElementById('user-ranking');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">👤</div><div class="empty-state-text">No user data yet</div></div>';
+                return;
+            }
+            const maxTraffic = Math.max(...data.map(u => u.total_upload + u.total_download));
+            container.innerHTML = data.map((u, i) => {
+                const total = u.total_upload + u.total_download;
+                const pct = maxTraffic > 0 ? (total / maxTraffic * 100) : 0;
+                const badge = u.disabled ? '<span class="status-badge status-disabled">Disabled</span>' : '<span class="status-badge status-active">Active</span>';
+                return `<div class="ranking-item">
+                <span class="ranking-rank">${i + 1}</span>
+                <span class="ranking-name">${u.username} ${badge}</span>
+                <span class="ranking-value">${formatBytes(total)}</span>
+                <div class="ranking-bar-bg"><div class="ranking-bar" style="width:${pct}%"></div></div>
+            </div>`;
+            }).join('');
+        }
+
+        // ── Countries / Map ──
+        async function loadCountries() {
+            const data = await fetchJSON('/api/v2/countries');
+            const container = document.getElementById('country-list');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🌍</div><div class="empty-state-text">No regional data yet. Connect through the proxy to start collecting.</div></div>';
+                return;
+            }
+            const totalTraffic = data.reduce((s, c) => s + c.upload + c.download, 0);
+            const maxTraffic = data[0].upload + data[0].download;
+
+            container.innerHTML = data.map(c => {
+                const total = c.upload + c.download;
+                const pct = totalTraffic > 0 ? (total / totalTraffic * 100).toFixed(1) : '0';
+                const barPct = maxTraffic > 0 ? (total / maxTraffic * 100) : 0;
+                return `<div class="country-item">
+                <span class="country-flag">${countryCodeToEmoji(c.country)}</span>
+                <span class="country-name">${c.country_name || c.country}<span class="country-code">${c.country}</span></span>
+                <span class="country-traffic">${formatBytes(total)}</span>
+                <div class="country-bar-bg"><div class="country-bar" style="width:${barPct}%"></div></div>
+                <span class="country-pct">${pct}%</span>
+            </div>`;
+            }).join('');
+
+            // Update map
+            if (leafletMap && geoLayer) updateMapColors(data);
+        }
+
+        function initMap() {
+            leafletMap = L.map('map-container', {
+                center: [20, 0], zoom: 2,
+                minZoom: 2, maxZoom: 6,
+                zoomControl: true,
+                attributionControl: false
+            });
+
+            // Use a simple tile layer
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19
+            }).addTo(leafletMap);
+
+            // Load GeoJSON for countries
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+                .then(r => r.json())
+                .then(topology => {
+                    // Convert TopoJSON to GeoJSON
+                    const countries = topojson_feature(topology, topology.objects.countries);
+                    geoLayer = L.geoJSON(countries, {
+                        style: { fillColor: '#2a2e42', fillOpacity: 0.6, weight: 1, color: '#3a3e52' },
+                        onEachFeature: (feature, layer) => {
+                            layer.on('mouseover', function () { this.setStyle({ fillOpacity: 0.8 }); });
+                            layer.on('mouseout', function () { geoLayer.resetStyle(this); });
+                        }
+                    }).addTo(leafletMap);
+                    loadCountries();
+                })
+                .catch(() => {
+                    // Fallback: load simpler GeoJSON
+                    fetch('https://cdn.jsdelivr.net/npm/@amcharts/amcharts5-geodata@5/worldLow.json')
+                        .then(r => r.json())
+                        .then(geojson => {
+                            geoLayer = L.geoJSON(geojson, {
+                                style: { fillColor: '#2a2e42', fillOpacity: 0.6, weight: 1, color: '#3a3e52' }
+                            }).addTo(leafletMap);
+                            loadCountries();
+                        }).catch(e => console.error('GeoJSON load failed:', e));
+                });
+        }
+
+        // Minimal TopoJSON → GeoJSON converter
+        function topojson_feature(topology, object) {
+            const features = object.geometries.map(g => ({
+                type: 'Feature',
+                id: g.id,
+                properties: g.properties || {},
+                geometry: topojson_geometry(topology, g)
+            }));
+            return { type: 'FeatureCollection', features };
+        }
+
+        function topojson_geometry(topology, o) {
+            const arcs = topology.arcs;
+            const transform = topology.transform;
+
+            function decodeArc(arcIdx) {
+                const arc = arcs[arcIdx < 0 ? ~arcIdx : arcIdx];
+                const coords = [];
+                let x = 0, y = 0;
+                for (const [dx, dy] of arc) {
+                    x += dx; y += dy;
+                    const lon = transform ? x * transform.scale[0] + transform.translate[0] : x;
+                    const lat = transform ? y * transform.scale[1] + transform.translate[1] : y;
+                    coords.push([lon, lat]);
+                }
+                if (arcIdx < 0) coords.reverse();
+                return coords;
+            }
+
+            function decodeRing(arcIndices) {
+                let coords = [];
+                for (const idx of arcIndices) {
+                    const arc = decodeArc(idx);
+                    coords = coords.concat(arc.slice(coords.length ? 1 : 0));
+                }
+                return coords;
+            }
+
+            if (o.type === 'Polygon') {
+                return { type: 'Polygon', coordinates: o.arcs.map(decodeRing) };
+            } else if (o.type === 'MultiPolygon') {
+                return { type: 'MultiPolygon', coordinates: o.arcs.map(rings => rings.map(decodeRing)) };
+            }
+            return { type: o.type, coordinates: [] };
+        }
+
+        function updateMapColors(countryData) {
+            if (!geoLayer) return;
+            const trafficMap = {};
+            let maxVal = 0;
+            countryData.forEach(c => {
+                const total = c.upload + c.download;
+                // Map numeric IDs to ISO codes using a lookup
+                trafficMap[c.country] = total;
+                if (total > maxVal) maxVal = total;
+            });
+
+            geoLayer.eachLayer(layer => {
+                // Try to match by ISO alpha-2 code in properties
+                const props = layer.feature.properties;
+                const id = layer.feature.id;
+                const iso = props.ISO_A2 || props.iso_a2 || props.id || '';
+                const traffic = trafficMap[iso] || 0;
+
+                if (traffic > 0 && maxVal > 0) {
+                    const intensity = Math.log(traffic + 1) / Math.log(maxVal + 1);
+                    const r = Math.round(99 + (16 - 99) * intensity);
+                    const g = Math.round(102 + (185 - 102) * intensity);
+                    const b = Math.round(241 + (129 - 241) * intensity);
+                    layer.setStyle({ fillColor: `rgb(${r},${g},${b})`, fillOpacity: 0.7 + intensity * 0.3 });
+                    layer.bindTooltip(`${iso}: ${formatBytes(traffic)}`, { sticky: true });
+                }
+            });
+        }
+
+        // ── Init ──
+        initTheme();
+
+        async function refreshAll() {
+            await Promise.all([loadOverview(), loadTrends(), loadDomains(), loadUsers()]);
+        }
+
+        refreshAll();
+        setInterval(refreshAll, 30000);
+    </script>
+</body>
+
+</html>

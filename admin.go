@@ -21,13 +21,14 @@ var templatesFS embed.FS
 type AdminServer struct {
 	Config       *Config
 	StatsManager *StatsManager
+	StatsDB      *StatsDB
 	Server       *http.Server
 	Templates    *template.Template
 	CACertPool   *x509.CertPool
 }
 
 // NewAdminServer creates a new admin panel server
-func NewAdminServer(config *Config, statsManager *StatsManager) (*AdminServer, error) {
+func NewAdminServer(config *Config, statsManager *StatsManager, statsDB ...*StatsDB) (*AdminServer, error) {
 	if !config.Admin.Enabled {
 		return nil, nil
 	}
@@ -110,6 +111,9 @@ func NewAdminServer(config *Config, statsManager *StatsManager) (*AdminServer, e
 		Templates:    templates,
 		CACertPool:   caCertPool,
 	}
+	if len(statsDB) > 0 && statsDB[0] != nil {
+		adminServer.StatsDB = statsDB[0]
+	}
 
 	// Create routes
 	mux := http.NewServeMux()
@@ -128,6 +132,12 @@ func NewAdminServer(config *Config, statsManager *StatsManager) (*AdminServer, e
 		mux.HandleFunc("/", adminServer.handleHome)
 		mux.HandleFunc("/user/", adminServer.handleUserDetail)
 		mux.HandleFunc("/assets/", adminServer.handleAssets)
+		mux.HandleFunc("/dashboard/", adminServer.handleDashboardV2)
+	}
+
+	// Register v2 API routes (always available if stats DB exists)
+	if adminServer.StatsDB != nil {
+		registerV2API(mux, adminServer.StatsDB)
 	}
 
 	// Create HTTPS server
@@ -325,6 +335,20 @@ func (a *AdminServer) handleAssets(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// handleDashboardV2 serves the new modern dashboard
+func (a *AdminServer) handleDashboardV2(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdmin(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.Templates.ExecuteTemplate(w, "dashboard_v2.html", nil); err != nil {
+		log.Printf("Error rendering dashboard v2 template: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
 // REST API handlers
 
 // handleAPIStats returns statistics for all users
@@ -413,6 +437,9 @@ func (a *AdminServer) handleAPIEnableUser(w http.ResponseWriter, r *http.Request
 	}
 
 	success := a.StatsManager.EnableUser(username)
+	if a.StatsDB != nil {
+		a.StatsDB.SetUserDisabled(username, false)
+	}
 	writeJSONResponse(w, WebResponse{
 		Success: true,
 		Data: map[string]interface{}{
@@ -443,6 +470,9 @@ func (a *AdminServer) handleAPIDisableUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	success := a.StatsManager.DisableUser(username)
+	if a.StatsDB != nil {
+		a.StatsDB.SetUserDisabled(username, true)
+	}
 	writeJSONResponse(w, WebResponse{
 		Success: true,
 		Data: map[string]interface{}{

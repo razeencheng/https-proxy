@@ -32,7 +32,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/opt/https-proxy/stats
+ReadWritePaths=/opt/https-proxy/stats /opt/https-proxy/data
 
 [Install]
 WantedBy=multi-user.target 

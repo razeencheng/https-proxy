@@ -6,7 +6,7 @@ This directory contains scripts and configuration files to deploy the HTTPS Prox
 
 - Linux (with systemd) or macOS
 - Root/sudo access
-- Go 1.19 or later (for building from source)
+- Go 1.24 or later (for building from source)
 
 ## Installation
 
@@ -53,7 +53,13 @@ Before starting the service, you need to configure your certificates:
 
 Edit the configuration file at `/etc/https-proxy/config.json` to match your requirements.
 
-### Step 5: Start the Service
+### Step 5: (Optional) Enable GeoIP Region Stats
+
+1. Register at [MaxMind](https://www.maxmind.com/en/geolite2/signup) to get a free GeoLite2 license key
+2. Download `GeoLite2-Country.mmdb` and place it in `/opt/https-proxy/data/`
+3. Set `"geoip": { "enabled": true }` in your config.json
+
+### Step 6: Start the Service
 
 #### On Linux
 
@@ -67,6 +73,36 @@ sudo systemctl enable https-proxy  # To enable auto-start at boot
 ```bash
 sudo launchctl load /Library/LaunchDaemons/com.proxy.https.plist
 ```
+
+## Upgrade (from a previous version)
+
+If you already have an older version deployed, use the upgrade scripts instead of install scripts:
+
+### On Linux
+
+```bash
+# Build the new binary first
+make build
+# From the project root directory
+sudo ./deploy/upgrade_linux.sh
+```
+
+### On macOS
+
+```bash
+make build
+sudo ./deploy/upgrade_macos.sh
+```
+
+The upgrade script will:
+1. Stop the running service
+2. Replace the binary
+3. Update the systemd/launchd service file
+4. Download GeoIP database (if not present)
+5. Check your config.json and prompt for any missing new fields
+6. Fix permissions and restart the service
+
+> **Note**: The upgrade script does NOT overwrite your `config.json`. It will tell you which fields need to be added manually.
 
 ## Uninstallation
 
@@ -106,7 +142,10 @@ After installation, the files will be organized as follows:
 ```
 /opt/https-proxy/
 ├── https-proxy      # The binary executable
-└── stats/           # Directory for statistics data
+├── stats/           # Directory for statistics data
+│   └── proxy_stats.db  # SQLite database
+└── data/            # Directory for GeoIP data
+    └── GeoLite2-Country.mmdb  # (Optional) MaxMind GeoIP database
 
 /etc/https-proxy/
 ├── config.json      # Configuration file
@@ -116,6 +155,13 @@ After installation, the files will be organized as follows:
     └── trustroot.pem
 
 /var/log/https-proxy/  # Log files (macOS only)
+```
+
+### Dashboard Access
+
+After installation, access the new dashboard at:
+```
+https://<admin-host>:<admin-port>/dashboard/
 ```
 
 ## Troubleshooting

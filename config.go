@@ -35,9 +35,21 @@ type ProxyConfig struct {
 
 // StatsConfig contains statistics settings
 type StatsConfig struct {
-	Enabled    bool   `json:"enabled"`
-	FilePath   string `json:"file_path"`
-	SavePeriod int    `json:"save_period_seconds"`
+	Enabled       bool   `json:"enabled"`
+	FilePath      string `json:"file_path"`           // Legacy JSON path (for migration)
+	DBPath        string `json:"db_path"`             // SQLite database path
+	SavePeriod    int    `json:"save_period_seconds"` // Legacy; now controls flush interval
+	FlushInterval int    `json:"flush_interval_seconds"`
+	Retention     struct {
+		MinuteStatsDays int `json:"minute_stats_days"`
+		HourlyStatsDays int `json:"hourly_stats_days"`
+	} `json:"retention"`
+}
+
+// GeoIPConfig contains GeoIP lookup settings
+type GeoIPConfig struct {
+	Enabled bool   `json:"enabled"`
+	DBPath  string `json:"db_path"`
 }
 
 // AdminConfig contains admin panel settings
@@ -64,6 +76,7 @@ type Config struct {
 	Proxy  ProxyConfig  `json:"proxy"`
 	Stats  StatsConfig  `json:"stats"`
 	Admin  AdminConfig  `json:"admin"`
+	GeoIP  GeoIPConfig  `json:"geoip"`
 }
 
 // LoadConfig loads the configuration from a file
@@ -144,6 +157,24 @@ func LoadConfig() (*Config, error) {
 	// Set default language to English if not specified
 	if cfg.Admin.Language == "" {
 		cfg.Admin.Language = "en"
+	}
+
+	// Stats defaults
+	if cfg.Stats.Enabled && cfg.Stats.DBPath == "" {
+		cfg.Stats.DBPath = "./stats/proxy_stats.db"
+	}
+	if cfg.Stats.FlushInterval <= 0 {
+		if cfg.Stats.SavePeriod > 0 {
+			cfg.Stats.FlushInterval = cfg.Stats.SavePeriod
+		} else {
+			cfg.Stats.FlushInterval = 30
+		}
+	}
+	if cfg.Stats.Retention.MinuteStatsDays <= 0 {
+		cfg.Stats.Retention.MinuteStatsDays = 7
+	}
+	if cfg.Stats.Retention.HourlyStatsDays <= 0 {
+		cfg.Stats.Retention.HourlyStatsDays = 90
 	}
 
 	return &cfg, nil

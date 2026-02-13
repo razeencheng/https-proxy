@@ -25,9 +25,12 @@ const (
 
 // Proxy represents the HTTPS proxy server
 type Proxy struct {
-	Config       *Config
-	CACertPool   *x509.CertPool // Certificate Authority certificate pool
-	StatsManager *StatsManager  // Statistics manager for tracking user activities
+	Config         *Config
+	CACertPool     *x509.CertPool  // Certificate Authority certificate pool
+	StatsManager   *StatsManager   // Legacy statistics manager
+	StatsCollector *StatsCollector // New async stats collector
+	StatsDB        *StatsDB        // SQLite stats database
+	GeoIP          *GeoIPService   // GeoIP lookup service
 }
 
 // GzipResponseWriter 提供gzip压缩支持
@@ -87,20 +90,65 @@ func main() {
 		log.Fatalf("failed to parse CA certificate")
 	}
 
-	// Create statistics manager
+	// Create statistics manager (legacy, kept for compatibility)
 	statsManager := NewStatsManager(cfg)
 
+	// Initialize new SQLite-based stats
+	var statsDB *StatsDB
+	var statsCollector *StatsCollector
+	var geoIP *GeoIPService
+
+	if cfg.Stats.Enabled {
+		var err2 error
+		statsDB, err2 = NewStatsDB(cfg.Stats.DBPath)
+		if err2 != nil {
+			log.Fatalf("failed to init stats database: %v", err2)
+		}
+		log.Printf("Stats database opened: %s", cfg.Stats.DBPath)
+
+		// Initialize GeoIP
+		if cfg.GeoIP.Enabled {
+			geoIP = NewGeoIPService(cfg.GeoIP.DBPath)
+		}
+
+		// Create async collector
+		statsCollector = NewStatsCollector(statsDB, geoIP, cfg.Stats.FlushInterval)
+
+		// Migrate from legacy JSON if it exists
+		if cfg.Stats.FilePath != "" {
+			if legacyStats := statsManager.GetUserStats(); len(legacyStats) > 0 {
+				if err := statsDB.MigrateFromJSON(legacyStats); err != nil {
+					log.Printf("Warning: JSON migration failed: %v", err)
+				} else {
+					log.Printf("Migrated %d users from legacy JSON stats", len(legacyStats))
+				}
+			}
+		}
+
+		// Start periodic cleanup
+		go func() {
+			ticker := time.NewTicker(6 * time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				statsDB.CleanupOldData(cfg.Stats.Retention.MinuteStatsDays, cfg.Stats.Retention.HourlyStatsDays)
+			}
+		}()
+	}
+
 	// Create admin panel server
-	adminServer, err := NewAdminServer(cfg, statsManager)
+	adminServer, err := NewAdminServer(cfg, statsManager, statsDB)
 	if err != nil {
 		log.Printf("Warning: Failed to create admin server: %v", err)
 	}
 
 	// Create a proxy with the configuration
 	prx := &Proxy{
-		Config:       cfg,
-		CACertPool:   caCertPool,
-		StatsManager: statsManager,
+		Config:         cfg,
+		CACertPool:     caCertPool,
+		StatsManager:   statsManager,
+		StatsCollector: statsCollector,
+		StatsDB:        statsDB,
+		GeoIP:          geoIP,
 	}
 
 	// Create an HTTPS server with the TLS config
@@ -149,7 +197,7 @@ func main() {
 	}
 
 	// Set up graceful shutdown
-	setupGracefulShutdown(server, statsManager, adminServer)
+	setupGracefulShutdown(server, statsManager, adminServer, statsCollector, statsDB, geoIP)
 
 	// Start the HTTPS server
 	log.Printf("Starting HTTPS server on port %d...\n", cfg.Server.Port)
@@ -160,7 +208,7 @@ func main() {
 }
 
 // setupGracefulShutdown sets up graceful shutdown to ensure statistics are saved
-func setupGracefulShutdown(server *http.Server, statsManager *StatsManager, adminServer *AdminServer) {
+func setupGracefulShutdown(server *http.Server, statsManager *StatsManager, adminServer *AdminServer, statsCollector *StatsCollector, statsDB *StatsDB, geoIP *GeoIPService) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
@@ -178,7 +226,22 @@ func setupGracefulShutdown(server *http.Server, statsManager *StatsManager, admi
 			adminServer.Stop()
 		}
 
-		// Stop statistics manager and save data
+		// Stop new stats collector (flushes remaining data)
+		if statsCollector != nil {
+			statsCollector.Stop()
+		}
+
+		// Close stats database
+		if statsDB != nil {
+			statsDB.Close()
+		}
+
+		// Close GeoIP
+		if geoIP != nil {
+			geoIP.Close()
+		}
+
+		// Stop legacy statistics manager and save data
 		statsManager.Stop()
 
 		log.Println("Server shutdown complete")
@@ -235,11 +298,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Verify client certificate
 	isValid := p.verifyClientCert(clientCert)
 
-	// Check if user is disabled
-	if isValid && p.StatsManager.IsUserDisabled(username) {
-		log.Printf("Disabled user rejected: %s, CN: %s", r.RemoteAddr, username)
-		http.Error(w, "Access denied: Your account has been disabled", http.StatusForbidden)
-		return
+	// Check if user is disabled (check new DB first, then legacy)
+	if isValid {
+		disabled := false
+		if p.StatsDB != nil {
+			disabled = p.StatsDB.IsUserDisabled(username)
+		} else {
+			disabled = p.StatsManager.IsUserDisabled(username)
+		}
+		if disabled {
+			log.Printf("Disabled user rejected: %s, CN: %s", r.RemoteAddr, username)
+			http.Error(w, "Access denied: Your account has been disabled", http.StatusForbidden)
+			return
+		}
 	}
 
 	if r.Method == http.MethodConnect {
@@ -263,6 +334,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Record request
 	if isValid {
 		p.StatsManager.RecordRequest(username)
+		if p.StatsDB != nil {
+			p.StatsDB.IncrementRequestCount(username)
+		}
 	}
 
 	fmt.Println("Unauthorized request: ", r.Method, r.RequestURI, r.RemoteAddr)
@@ -362,6 +436,12 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	}
 	defer conn.Close()
 
+	// Extract the remote IP for GeoIP lookup
+	targetIP := ""
+	if tcpAddr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		targetIP = tcpAddr.IP.String()
+	}
+
 	// 设置TCP参数以优化性能
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		// 根据配置禁用Nagle算法
@@ -411,19 +491,36 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	serverReader := NewCountingReader(conn)
 	serverWriter := NewCountingWriter(conn)
 
-	// Create user traffic readers for statistics tracking
+	// Create user traffic readers for legacy statistics tracking
 	userClientReader := NewUserTrafficReader(p.StatsManager, username, clientReader)
 	userServerReader := NewUserTrafficReader(p.StatsManager, username, serverReader)
 
 	// 创建大缓冲区，提高拷贝性能
 	buf := make([]byte, p.getBufferSize())
 
-	// Set up traffic copying from client to server (with statistics)
+	// Set up traffic copying from client to server (upload)
+	done := make(chan struct{})
 	go func() {
 		io.CopyBuffer(serverWriter, userClientReader, buf)
 		conn.Close()
+		close(done)
 	}()
 
-	// Set up traffic copying from server to client (with statistics)
+	// Set up traffic copying from server to client (download)
 	io.CopyBuffer(clientWriter, userServerReader, buf)
+
+	// Wait for the upload goroutine to finish
+	<-done
+
+	// After both directions are done, emit TrafficEvent to the new collector
+	if p.StatsCollector != nil {
+		p.StatsCollector.Record(TrafficEvent{
+			Username:  username,
+			Domain:    host,
+			TargetIP:  targetIP,
+			Upload:    clientReader.BytesRead(), // client→server = upload
+			Download:  serverReader.BytesRead(), // server→client = download
+			Timestamp: time.Now(),
+		})
+	}
 }
