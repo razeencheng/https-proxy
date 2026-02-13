@@ -19,8 +19,8 @@ import (
 
 // 定义更大的缓冲区大小常量，用于优化数据传输性能
 const (
-	// 默认缓冲区大小为1MB
-	DefaultBufferSize = 1024 * 1024
+	// 默认缓冲区大小为64KB（网络I/O最佳实践）
+	DefaultBufferSize = 64 * 1024
 )
 
 // Proxy represents the HTTPS proxy server
@@ -485,41 +485,44 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 		netConn.SetWriteBuffer(p.getWriteBufferSize())
 	}
 
-	// Create readers and writers for statistics tracking
+	// Create counting wrappers for statistics tracking
 	clientReader := NewCountingReader(clientConn)
 	clientWriter := NewCountingWriter(clientConn)
 	serverReader := NewCountingReader(conn)
 	serverWriter := NewCountingWriter(conn)
 
-	// Create user traffic readers for legacy statistics tracking
-	userClientReader := NewUserTrafficReader(p.StatsManager, username, clientReader)
-	userServerReader := NewUserTrafficReader(p.StatsManager, username, serverReader)
-
-	// 创建大缓冲区，提高拷贝性能
-	buf := make([]byte, p.getBufferSize())
+	// 每个方向独立 buffer，避免数据竞争
+	bufSize := p.getBufferSize()
+	uploadBuf := make([]byte, bufSize)
+	downloadBuf := make([]byte, bufSize)
 
 	// Set up traffic copying from client to server (upload)
 	done := make(chan struct{})
 	go func() {
-		io.CopyBuffer(serverWriter, userClientReader, buf)
+		io.CopyBuffer(serverWriter, clientReader, uploadBuf)
 		conn.Close()
 		close(done)
 	}()
 
 	// Set up traffic copying from server to client (download)
-	io.CopyBuffer(clientWriter, userServerReader, buf)
+	io.CopyBuffer(clientWriter, serverReader, downloadBuf)
 
 	// Wait for the upload goroutine to finish
 	<-done
 
-	// After both directions are done, emit TrafficEvent to the new collector
+	// Record traffic to legacy StatsManager in one shot (no per-read locking)
+	uploadBytes := clientReader.BytesRead()
+	downloadBytes := serverReader.BytesRead()
+	p.StatsManager.RecordTraffic(username, uploadBytes+downloadBytes)
+
+	// Emit TrafficEvent to the new async collector
 	if p.StatsCollector != nil {
 		p.StatsCollector.Record(TrafficEvent{
 			Username:  username,
 			Domain:    host,
 			TargetIP:  targetIP,
-			Upload:    clientReader.BytesRead(), // client→server = upload
-			Download:  serverReader.BytesRead(), // server→client = download
+			Upload:    uploadBytes,
+			Download:  downloadBytes,
 			Timestamp: time.Now(),
 		})
 	}
