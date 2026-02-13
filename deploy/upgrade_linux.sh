@@ -60,17 +60,14 @@ fi
 # ── Step 3: Download GeoIP database (if not present) ──
 echo ""
 echo "=== Step 3: GeoIP Database ==="
-GEOIP_URL="https://cdn.jsdelivr.net/gh/wp-statistics/GeoLite2-Country/GeoLite2-Country.mmdb"
-GEOIP_FALLBACK_URL="https://raw.githubusercontent.com/wp-statistics/GeoLite2-Country/main/GeoLite2-Country.mmdb"
+GEOIP_URL="https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb"
 if [ ! -f "$DATA_DIR/GeoLite2-Country.mmdb" ]; then
   echo "Downloading GeoIP database..."
   if command -v curl &> /dev/null; then
     curl -fsSL -o "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_URL" 2>/dev/null || \
-    curl -fsSL -o "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_FALLBACK_URL" 2>/dev/null || \
     echo "Warning: Failed to download GeoIP database."
   elif command -v wget &> /dev/null; then
     wget -q -O "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_URL" 2>/dev/null || \
-    wget -q -O "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_FALLBACK_URL" 2>/dev/null || \
     echo "Warning: Failed to download GeoIP database."
   fi
   if [ -f "$DATA_DIR/GeoLite2-Country.mmdb" ]; then

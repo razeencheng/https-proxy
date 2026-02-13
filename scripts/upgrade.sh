@@ -156,16 +156,13 @@ download_geoip() {
 
   if [ ! -f "$DATA_DIR/GeoLite2-Country.mmdb" ]; then
     echo "      Downloading GeoIP database..."
-    GEOIP_URL="https://cdn.jsdelivr.net/gh/wp-statistics/GeoLite2-Country/GeoLite2-Country.mmdb"
-    GEOIP_FALLBACK="https://raw.githubusercontent.com/wp-statistics/GeoLite2-Country/main/GeoLite2-Country.mmdb"
+    GEOIP_URL="https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb"
 
     if [ "$DOWNLOADER" = "curl" ]; then
       curl -fsSL -o "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_URL" 2>/dev/null || \
-      curl -fsSL -o "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_FALLBACK" 2>/dev/null || \
       echo "      Warning: Failed to download GeoIP database."
     else
       wget -q -O "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_URL" 2>/dev/null || \
-      wget -q -O "$DATA_DIR/GeoLite2-Country.mmdb" "$GEOIP_FALLBACK" 2>/dev/null || \
       echo "      Warning: Failed to download GeoIP database."
     fi
 

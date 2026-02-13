@@ -31,6 +31,7 @@ jobs:
 
       - name: Build binary
         env:
+          CGO_ENABLED: '0'
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |

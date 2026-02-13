@@ -55,9 +55,9 @@ Edit the configuration file at `/etc/https-proxy/config.json` to match your requ
 
 ### Step 5: (Optional) Enable GeoIP Region Stats
 
-1. Register at [MaxMind](https://www.maxmind.com/en/geolite2/signup) to get a free GeoLite2 license key
-2. Download `GeoLite2-Country.mmdb` and place it in `/opt/https-proxy/data/`
-3. Set `"geoip": { "enabled": true }` in your config.json
+1. The install/upgrade scripts automatically download `GeoLite2-Country.mmdb` to `/opt/https-proxy/data/`
+2. If the download failed, manually download from [P3TERX/GeoLite.mmdb](https://github.com/P3TERX/GeoLite.mmdb)
+3. Ensure `"geoip": { "enabled": true }` in your config.json
 
 ### Step 6: Start the Service
 
