@@ -43,6 +43,7 @@ type StatsConfig struct {
 	Retention     struct {
 		MinuteStatsDays int `json:"minute_stats_days"`
 		HourlyStatsDays int `json:"hourly_stats_days"`
+		DailyStatsDays  int `json:"daily_stats_days"`
 	} `json:"retention"`
 }
 
@@ -175,6 +176,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Stats.Retention.HourlyStatsDays <= 0 {
 		cfg.Stats.Retention.HourlyStatsDays = 90
+	}
+	if cfg.Stats.Retention.DailyStatsDays <= 0 {
+		cfg.Stats.Retention.DailyStatsDays = 90
 	}
 
 	return &cfg, nil

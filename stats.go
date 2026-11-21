@@ -186,35 +186,39 @@ func (sm *StatsManager) periodicSave() {
 	}
 }
 
-// SaveStats saves user statistics to a file
+// SaveStats saves user statistics to a file without holding the lock during disk I/O.
 func (sm *StatsManager) SaveStats() {
 	if !sm.Config.Stats.Enabled || sm.Config.Stats.FilePath == "" {
 		return
 	}
 
+	// Snapshot under lock so proxy goroutines never block on JSON encoding / disk writes.
 	sm.Lock()
-	defer sm.Unlock()
-
-	// Mark as not dirty before saving
+	if !sm.dirtyStats {
+		sm.Unlock()
+		return
+	}
 	sm.dirtyStats = false
-
+	snapshot := make(map[string]*UserStats, len(sm.UserStats))
+	for k, v := range sm.UserStats {
+		cp := *v
+		snapshot[k] = &cp
+	}
 	filePath := sm.Config.Stats.FilePath
-	dirPath := filepath.Dir(filePath)
+	sm.Unlock()
 
-	// Ensure directory exists
+	dirPath := filepath.Dir(filePath)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		log.Printf("Failed to create directory for stats file: %v", err)
 		return
 	}
 
-	// Encode statistics as JSON
-	data, err := json.MarshalIndent(sm.UserStats, "", "  ")
+	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		log.Printf("Failed to encode stats data: %v", err)
 		return
 	}
 
-	// Write to file
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		log.Printf("Failed to write stats file: %v", err)
 		return

@@ -6,18 +6,20 @@ import (
 	"time"
 )
 
-// TrafficEvent is emitted when a CONNECT tunnel closes, carrying per-connection
-// traffic information with domain and directional byte counts.
+// TrafficEvent is emitted asynchronously when a CONNECT tunnel closes or an HTTP
+// request is processed, carrying traffic metadata without blocking the proxy.
 type TrafficEvent struct {
-	Username    string
-	Domain      string
-	TargetIP    string
-	Upload      uint64
-	Download    uint64
-	Timestamp   time.Time
-	Country     string
-	CountryName string
-	Continent   string
+	Username     string
+	Domain       string
+	TargetIP     string
+	Upload       uint64
+	Download     uint64
+	ConnCount    int
+	RequestCount int
+	Timestamp    time.Time
+	Country      string
+	CountryName  string
+	Continent    string
 }
 
 // bufferKey uniquely identifies an aggregation bucket.
@@ -27,24 +29,29 @@ type bufferKey struct {
 	Country  string
 	Minute   string
 	Hour     string
+	Date     string
 }
 
 // aggregatedEvent accumulates traffic within a single buffer key.
 type aggregatedEvent struct {
-	Upload      uint64
-	Download    uint64
-	ConnCount   int
-	CountryName string
-	Continent   string
-	LastSeen    time.Time
+	Upload       uint64
+	Download     uint64
+	ConnCount    int
+	RequestCount int
+	CountryName  string
+	Continent    string
+	LastSeen     time.Time
 }
 
-// StatsCollector receives TrafficEvents asynchronously, aggregates them in
-// memory, and periodically flushes to SQLite via StatsDB.BatchUpsert.
+// StatsCollector receives TrafficEvents asynchronously, enriches GeoIP on the
+// background goroutine, aggregates in memory, and periodically flushes to SQLite.
 type StatsCollector struct {
 	db      *StatsDB
 	geoIP   *GeoIPService
 	eventCh chan TrafficEvent
+
+	// Single-goroutine IP -> GeoResult cache used only inside loop()
+	geoCache map[string]*GeoResult
 
 	mu     sync.Mutex
 	buffer map[bufferKey]*aggregatedEvent
@@ -65,6 +72,7 @@ func NewStatsCollector(db *StatsDB, geoIP *GeoIPService, flushSeconds int) *Stat
 		db:            db,
 		geoIP:         geoIP,
 		eventCh:       make(chan TrafficEvent, 10000),
+		geoCache:      make(map[string]*GeoResult, 256),
 		buffer:        make(map[bufferKey]*aggregatedEvent),
 		flushInterval: time.Duration(flushSeconds) * time.Second,
 		maxBuffer:     5000,
@@ -75,22 +83,31 @@ func NewStatsCollector(db *StatsDB, geoIP *GeoIPService, flushSeconds int) *Stat
 	return sc
 }
 
-// Record sends a TrafficEvent into the collector. Non-blocking – if the
-// channel is full the event is silently dropped (and logged).
+// Record sends a TrafficEvent into the collector. Strictly non-blocking –
+// GeoIP lookup and aggregation happen on the background goroutine.
 func (sc *StatsCollector) Record(ev TrafficEvent) {
-	// Enrich with GeoIP if not already set
-	if ev.Country == "" && ev.TargetIP != "" && sc.geoIP != nil {
-		if geo := sc.geoIP.Lookup(ev.TargetIP); geo != nil {
-			ev.Country = geo.Country
-			ev.CountryName = geo.CountryName
-			ev.Continent = geo.Continent
-		}
+	if ev.ConnCount == 0 && ev.RequestCount == 0 {
+		ev.ConnCount = 1
 	}
-
 	select {
 	case sc.eventCh <- ev:
 	default:
 		log.Printf("[StatsCollector] Channel full, dropping event for %s/%s", ev.Username, ev.Domain)
+	}
+}
+
+// RecordRequest asynchronously records an authorized non-CONNECT HTTP request
+// without touching SQLite on the proxy hot path.
+func (sc *StatsCollector) RecordRequest(username string) {
+	ev := TrafficEvent{
+		Username:     username,
+		RequestCount: 1,
+		Timestamp:    time.Now(),
+	}
+	select {
+	case sc.eventCh <- ev:
+	default:
+		log.Printf("[StatsCollector] Channel full, dropping request event for %s", username)
 	}
 }
 
@@ -108,8 +125,8 @@ func (sc *StatsCollector) loop() {
 	for {
 		select {
 		case ev := <-sc.eventCh:
+			sc.enrichGeo(&ev)
 			sc.aggregate(ev)
-			// Force flush if buffer is too large
 			if sc.bufferLen() >= sc.maxBuffer {
 				sc.flush()
 			}
@@ -120,6 +137,7 @@ func (sc *StatsCollector) loop() {
 			for {
 				select {
 				case ev := <-sc.eventCh:
+					sc.enrichGeo(&ev)
 					sc.aggregate(ev)
 				default:
 					sc.flush()
@@ -130,11 +148,39 @@ func (sc *StatsCollector) loop() {
 	}
 }
 
+// enrichGeo runs exclusively in the background loop goroutine.
+func (sc *StatsCollector) enrichGeo(ev *TrafficEvent) {
+	if ev.Country != "" || ev.TargetIP == "" || sc.geoIP == nil {
+		return
+	}
+	if cached, ok := sc.geoCache[ev.TargetIP]; ok {
+		if cached != nil {
+			ev.Country = cached.Country
+			ev.CountryName = cached.CountryName
+			ev.Continent = cached.Continent
+		}
+		return
+	}
+
+	geo := sc.geoIP.Lookup(ev.TargetIP)
+	if len(sc.geoCache) >= 4096 {
+		// Simple bounded cache reset to cap memory usage
+		clear(sc.geoCache)
+	}
+	sc.geoCache[ev.TargetIP] = geo
+	if geo != nil {
+		ev.Country = geo.Country
+		ev.CountryName = geo.CountryName
+		ev.Continent = geo.Continent
+	}
+}
+
 func (sc *StatsCollector) aggregate(ev TrafficEvent) {
 	t := ev.Timestamp
 	if t.IsZero() {
 		t = time.Now()
 	}
+	date := t.Format("2006-01-02")
 	minute := t.Truncate(time.Minute).Format("2006-01-02T15:04:00")
 	hour := t.Truncate(time.Hour).Format("2006-01-02T15:00:00")
 
@@ -144,6 +190,7 @@ func (sc *StatsCollector) aggregate(ev TrafficEvent) {
 		Country:  ev.Country,
 		Minute:   minute,
 		Hour:     hour,
+		Date:     date,
 	}
 
 	sc.mu.Lock()
@@ -159,7 +206,8 @@ func (sc *StatsCollector) aggregate(ev TrafficEvent) {
 	}
 	agg.Upload += ev.Upload
 	agg.Download += ev.Download
-	agg.ConnCount++
+	agg.ConnCount += ev.ConnCount
+	agg.RequestCount += ev.RequestCount
 	if t.After(agg.LastSeen) {
 		agg.LastSeen = t
 	}
@@ -177,7 +225,6 @@ func (sc *StatsCollector) flush() {
 		sc.mu.Unlock()
 		return
 	}
-	// Swap out the buffer under lock
 	buf := sc.buffer
 	sc.buffer = make(map[bufferKey]*aggregatedEvent, len(buf))
 	sc.mu.Unlock()
@@ -185,17 +232,19 @@ func (sc *StatsCollector) flush() {
 	records := make([]TrafficRecord, 0, len(buf))
 	for key, agg := range buf {
 		records = append(records, TrafficRecord{
-			Username:    key.Username,
-			Domain:      key.Domain,
-			Upload:      agg.Upload,
-			Download:    agg.Download,
-			ConnCount:   agg.ConnCount,
-			Country:     key.Country,
-			CountryName: agg.CountryName,
-			Continent:   agg.Continent,
-			Minute:      key.Minute,
-			Hour:        key.Hour,
-			Timestamp:   agg.LastSeen,
+			Username:     key.Username,
+			Domain:       key.Domain,
+			Upload:       agg.Upload,
+			Download:     agg.Download,
+			ConnCount:    agg.ConnCount,
+			RequestCount: agg.RequestCount,
+			Country:      key.Country,
+			CountryName:  agg.CountryName,
+			Continent:    agg.Continent,
+			Minute:       key.Minute,
+			Hour:         key.Hour,
+			Date:         key.Date,
+			Timestamp:    agg.LastSeen,
 		})
 	}
 
@@ -208,6 +257,7 @@ func (sc *StatsCollector) flush() {
 				existing.Upload += agg.Upload
 				existing.Download += agg.Download
 				existing.ConnCount += agg.ConnCount
+				existing.RequestCount += agg.RequestCount
 			} else {
 				sc.buffer[key] = agg
 			}

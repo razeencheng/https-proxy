@@ -220,12 +220,21 @@ func main() {
 			}
 		}
 
-		// Start periodic cleanup
+		// Start periodic cleanup (run once on startup, then every 6 hours)
 		go func() {
+			statsDB.CleanupOldData(
+				cfg.Stats.Retention.MinuteStatsDays,
+				cfg.Stats.Retention.HourlyStatsDays,
+				cfg.Stats.Retention.DailyStatsDays,
+			)
 			ticker := time.NewTicker(6 * time.Hour)
 			defer ticker.Stop()
 			for range ticker.C {
-				statsDB.CleanupOldData(cfg.Stats.Retention.MinuteStatsDays, cfg.Stats.Retention.HourlyStatsDays)
+				statsDB.CleanupOldData(
+					cfg.Stats.Retention.MinuteStatsDays,
+					cfg.Stats.Retention.HourlyStatsDays,
+					cfg.Stats.Retention.DailyStatsDays,
+				)
 			}
 		}()
 	}
@@ -410,10 +419,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Record request
+	// Record request asynchronously (no SQLite I/O on proxy hot path)
 	if isValid {
 		p.StatsManager.RecordRequest(username)
-		if p.StatsDB != nil {
+		if p.StatsCollector != nil {
+			p.StatsCollector.RecordRequest(username)
+		} else if p.StatsDB != nil {
 			p.StatsDB.IncrementRequestCount(username)
 		}
 	}

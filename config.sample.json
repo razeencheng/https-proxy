@@ -22,7 +22,14 @@
   "stats": {
     "enabled": true,
     "file_path": "./stats/user_stats.json",
-    "save_period_seconds": 30
+    "db_path": "./stats/proxy_stats.db",
+    "save_period_seconds": 30,
+    "flush_interval_seconds": 30,
+    "retention": {
+      "minute_stats_days": 7,
+      "hourly_stats_days": 90,
+      "daily_stats_days": 90
+    }
   },
   "admin": {
     "enabled": true,

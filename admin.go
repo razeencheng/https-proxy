@@ -137,7 +137,11 @@ func NewAdminServer(config *Config, statsManager *StatsManager, statsDB ...*Stat
 
 	// Register v2 API routes (always available if stats DB exists)
 	if adminServer.StatsDB != nil {
-		registerV2API(mux, adminServer.StatsDB)
+		retentionDays := config.Stats.Retention.DailyStatsDays
+		if retentionDays <= 0 {
+			retentionDays = 90
+		}
+		registerV2API(mux, adminServer.StatsDB, retentionDays)
 	}
 
 	// Create HTTPS server
