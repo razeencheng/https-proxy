@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -16,15 +17,27 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-// 定义更大的缓冲区大小常量，用于优化数据传输性能
+// 定义缓冲区与隧道收尾常量，兼顾吞吐性能与长时运行的内存稳定性
 const (
 	// 默认缓冲区大小为64KB（网络I/O最佳实践）
 	DefaultBufferSize = 64 * 1024
+	// 单方向转发缓冲区上限（128KB；TLS记录最大明文仅16KB，过大的buffer_size会导致高并发下大量堆分配与GC停顿）
+	MaxCopyBufferSize = 128 * 1024
+	// 单方向流结束后的半关闭宽限时间，超时立即强制双向关闭防止僵尸连接与Goroutine泄漏
+	defaultHalfCloseTimeout = 15 * time.Second
 )
+
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, MaxCopyBufferSize)
+		return &buf
+	},
+}
 
 // Proxy represents the HTTPS proxy server
 type Proxy struct {
@@ -430,9 +443,12 @@ func (p *Proxy) proxyUnauthorizedRequest(w http.ResponseWriter, r *http.Request)
 	rp.ServeHTTP(w, r)
 }
 
-// 获取配置的缓冲区大小，如果配置中未指定，则使用默认值
+// 获取配置的缓冲区大小（封顶 MaxCopyBufferSize，避免配置过大导致高并发下内存暴涨）
 func (p *Proxy) getBufferSize() int {
-	if p.Config.Server.Performance.BufferSize > 0 {
+	if p.Config != nil && p.Config.Server.Performance.BufferSize > 0 {
+		if p.Config.Server.Performance.BufferSize > MaxCopyBufferSize {
+			return MaxCopyBufferSize
+		}
 		return p.Config.Server.Performance.BufferSize
 	}
 	return DefaultBufferSize
@@ -446,25 +462,121 @@ func (p *Proxy) getTCPKeepAlive() time.Duration {
 	return 30 * time.Second
 }
 
-// 获取读缓冲区大小
-func (p *Proxy) getReadBufferSize() int {
-	if p.Config.Server.Performance.ReadBufferSize > 0 {
-		return p.Config.Server.Performance.ReadBufferSize
-	}
-	return DefaultBufferSize * 2
-}
-
-// 获取写缓冲区大小
-func (p *Proxy) getWriteBufferSize() int {
-	if p.Config.Server.Performance.WriteBufferSize > 0 {
-		return p.Config.Server.Performance.WriteBufferSize
-	}
-	return DefaultBufferSize * 2
-}
-
 // 获取是否禁用Nagle算法
 func (p *Proxy) getNoDelay() bool {
 	return p.Config.Server.Performance.NoDelay
+}
+
+type closeWriter interface {
+	CloseWrite() error
+}
+
+// extractTCPConn 提取底层 *net.TCPConn（兼容直接 TCP 连接与 *tls.Conn 包装连接）
+func extractTCPConn(c net.Conn) *net.TCPConn {
+	if tc, ok := c.(*net.TCPConn); ok {
+		return tc
+	}
+	if tlsConn, ok := c.(*tls.Conn); ok {
+		if tc, ok := tlsConn.NetConn().(*net.TCPConn); ok {
+			return tc
+		}
+	}
+	return nil
+}
+
+// closeWriteConn 尝试优雅半关闭连接写端（若为 *tls.Conn 则先发 close_notify 再发底层 TCP FIN）
+func closeWriteConn(c net.Conn) bool {
+	didHalfClose := false
+	if cw, ok := c.(closeWriter); ok {
+		if cw.CloseWrite() == nil {
+			didHalfClose = true
+		}
+	}
+	if tlsConn, ok := c.(*tls.Conn); ok {
+		if tc, ok := tlsConn.NetConn().(*net.TCPConn); ok {
+			if tc.CloseWrite() == nil {
+				didHalfClose = true
+			}
+		}
+	}
+	return didHalfClose
+}
+
+func (p *Proxy) applyTCPConnTuning(c net.Conn) {
+	tcpConn := extractTCPConn(c)
+	if tcpConn == nil {
+		return
+	}
+	_ = tcpConn.SetNoDelay(p.getNoDelay())
+	_ = tcpConn.SetKeepAlive(true)
+	_ = tcpConn.SetKeepAlivePeriod(p.getTCPKeepAlive())
+	// 注意：不调用 SetReadBuffer / SetWriteBuffer，避免 Linux 内核关闭 TCP 动态缓冲自动调优
+	// （setsockopt SO_RCVBUF/SO_SNDBUF 会设置 SOCK_RCVBUF_LOCK/SOCK_SNDBUF_LOCK，
+	// 导致高延迟跨洋链路的发送窗口被锁死而无法随 tcp_rmem/tcp_wmem 扩展）。
+}
+
+// relayTunnel 双向转发客户端与目标端流量，复用池化缓冲区并消除单向断开时的死锁与连接泄漏
+func relayTunnel(clientConn net.Conn, clientInitReader io.Reader, serverConn net.Conn, bufSize int, halfCloseTimeout time.Duration) (uint64, uint64) {
+	if bufSize <= 0 {
+		bufSize = DefaultBufferSize
+	} else if bufSize > MaxCopyBufferSize {
+		bufSize = MaxCopyBufferSize
+	}
+	if halfCloseTimeout <= 0 {
+		halfCloseTimeout = defaultHalfCloseTimeout
+	}
+
+	var clientSrc io.Reader = clientConn
+	if clientInitReader != nil {
+		clientSrc = io.MultiReader(clientInitReader, clientConn)
+	}
+
+	clientReader := NewCountingReader(clientSrc)
+	clientWriter := NewCountingWriter(clientConn)
+	serverReader := NewCountingReader(serverConn)
+	serverWriter := NewCountingWriter(serverConn)
+
+	upBufPtr := copyBufPool.Get().(*[]byte)
+	downBufPtr := copyBufPool.Get().(*[]byte)
+	defer copyBufPool.Put(upBufPtr)
+	defer copyBufPool.Put(downBufPtr)
+
+	uploadBuf := (*upBufPtr)[:bufSize]
+	downloadBuf := (*downBufPtr)[:bufSize]
+
+	done := make(chan struct{})
+	go func() {
+		_, err := io.CopyBuffer(serverWriter, clientReader, uploadBuf)
+		if err != nil {
+			_ = serverConn.Close()
+			_ = clientConn.Close()
+		} else {
+			if !closeWriteConn(serverConn) {
+				_ = serverConn.Close()
+			} else {
+				_ = serverConn.SetReadDeadline(time.Now().Add(halfCloseTimeout))
+			}
+		}
+		close(done)
+	}()
+
+	_, downErr := io.CopyBuffer(clientWriter, serverReader, downloadBuf)
+	if downErr != nil {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	} else {
+		if !closeWriteConn(clientConn) {
+			_ = clientConn.Close()
+		} else {
+			_ = clientConn.SetReadDeadline(time.Now().Add(halfCloseTimeout))
+		}
+	}
+
+	<-done
+	_ = clientConn.Close()
+	_ = serverConn.Close()
+
+	return clientReader.BytesRead(), serverReader.BytesRead()
 }
 
 // handleConnectWithStats handles CONNECT requests and tracks traffic statistics
@@ -483,8 +595,11 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 		DualStack: true, // 启用IPv4/IPv6双栈
 	}
 
+	dialCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
 	// 使用自定义配置的连接
-	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, port))
+	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to connect to target host: %v", err), http.StatusBadGateway)
 		return
@@ -495,29 +610,23 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	targetIP := ""
 	if tcpAddr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
 		targetIP = tcpAddr.IP.String()
+	} else if addr := conn.RemoteAddr(); addr != nil {
+		if h, _, splitErr := net.SplitHostPort(addr.String()); splitErr == nil {
+			targetIP = h
+		}
 	}
 
-	// 设置TCP参数以优化性能
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		// 根据配置禁用Nagle算法
-		tcpConn.SetNoDelay(p.getNoDelay())
-		// 启用TCP保活
-		tcpConn.SetKeepAlive(true)
-		// 设置TCP保活周期
-		tcpConn.SetKeepAlivePeriod(p.getTCPKeepAlive())
-		// 增加读写缓冲区大小
-		tcpConn.SetReadBuffer(p.getReadBufferSize())
-		tcpConn.SetWriteBuffer(p.getWriteBufferSize())
-	}
+	// 设置出站TCP参数以优化性能
+	p.applyTCPConnTuning(conn)
 
-	// Send a 200 OK response to the client
+	// Hijack客户端连接并返回200隧道建立响应
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
-	clientConn, _, err := hijacker.Hijack()
+	clientConn, clientBuf, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -525,49 +634,21 @@ func (p *Proxy) handleConnectWithStats(w http.ResponseWriter, r *http.Request, u
 	defer clientConn.Close()
 
 	// Send connection established message
-	clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
-
-	// 应用客户端连接优化
-	if netConn, ok := clientConn.(*net.TCPConn); ok {
-		// 根据配置禁用Nagle算法
-		netConn.SetNoDelay(p.getNoDelay())
-		// 启用TCP保活
-		netConn.SetKeepAlive(true)
-		// 设置TCP保活周期
-		netConn.SetKeepAlivePeriod(p.getTCPKeepAlive())
-		// 增加读写缓冲区大小
-		netConn.SetReadBuffer(p.getReadBufferSize())
-		netConn.SetWriteBuffer(p.getWriteBufferSize())
+	if _, err := clientConn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n")); err != nil {
+		return
 	}
 
-	// Create counting wrappers for statistics tracking
-	clientReader := NewCountingReader(clientConn)
-	clientWriter := NewCountingWriter(clientConn)
-	serverReader := NewCountingReader(conn)
-	serverWriter := NewCountingWriter(conn)
+	// 解包 *tls.Conn 应用底层客户端 TCP KeepAlive 与 NoDelay 优化
+	p.applyTCPConnTuning(clientConn)
 
-	// 每个方向独立 buffer，避免数据竞争
-	bufSize := p.getBufferSize()
-	uploadBuf := make([]byte, bufSize)
-	downloadBuf := make([]byte, bufSize)
+	var bufferedClientData io.Reader
+	if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
+		bufferedClientData = io.LimitReader(clientBuf.Reader, int64(clientBuf.Reader.Buffered()))
+	}
 
-	// Set up traffic copying from client to server (upload)
-	done := make(chan struct{})
-	go func() {
-		io.CopyBuffer(serverWriter, clientReader, uploadBuf)
-		conn.Close()
-		close(done)
-	}()
-
-	// Set up traffic copying from server to client (download)
-	io.CopyBuffer(clientWriter, serverReader, downloadBuf)
-
-	// Wait for the upload goroutine to finish
-	<-done
+	uploadBytes, downloadBytes := relayTunnel(clientConn, bufferedClientData, conn, p.getBufferSize(), defaultHalfCloseTimeout)
 
 	// Record traffic to legacy StatsManager in one shot (no per-read locking)
-	uploadBytes := clientReader.BytesRead()
-	downloadBytes := serverReader.BytesRead()
 	p.StatsManager.RecordTraffic(username, uploadBytes+downloadBytes)
 
 	// Emit TrafficEvent to the new async collector

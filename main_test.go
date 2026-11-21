@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func gzipBytes(t *testing.T, data []byte) []byte {
@@ -239,5 +241,124 @@ func TestCompressionMiddlewareSkipsConnectAndPreservesHijacker(t *testing.T) {
 
 	if !sawHijacker {
 		t.Fatalf("expected CONNECT handler to retain http.Hijacker")
+	}
+}
+
+func TestRelayTunnelServerEOFUnblocksIdleClientAndExits(t *testing.T) {
+	clientLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen client: %v", err)
+	}
+	defer clientLn.Close()
+
+	serverLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen server: %v", err)
+	}
+	defer serverLn.Close()
+
+	playerEOFSeen := make(chan time.Duration, 1)
+	zombieClientHold := make(chan struct{})
+	defer close(zombieClientHold)
+
+	go func() {
+		playerConn, err := net.Dial("tcp", clientLn.Addr().String())
+		if err != nil {
+			return
+		}
+		defer playerConn.Close()
+
+		_, _ = playerConn.Write([]byte("GET /chunk.m4s HTTP/1.1\r\n\r\n"))
+
+		start := time.Now()
+		_, _ = io.ReadAll(playerConn)
+		playerEOFSeen <- time.Since(start)
+
+		<-zombieClientHold
+	}()
+
+	const videoChunk = "VIDEO_SEGMENT_PAYLOAD_DATA"
+	go func() {
+		cdnConn, err := serverLn.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 64)
+		_, _ = cdnConn.Read(buf)
+		_, _ = cdnConn.Write([]byte(videoChunk))
+		_ = cdnConn.Close()
+	}()
+
+	proxyClientConn, err := clientLn.Accept()
+	if err != nil {
+		t.Fatalf("accept client: %v", err)
+	}
+	defer proxyClientConn.Close()
+
+	proxyServerConn, err := net.Dial("tcp", serverLn.Addr().String())
+	if err != nil {
+		t.Fatalf("dial server: %v", err)
+	}
+	defer proxyServerConn.Close()
+
+	relayDone := make(chan [2]uint64, 1)
+	go func() {
+		up, down := relayTunnel(proxyClientConn, nil, proxyServerConn, DefaultBufferSize, 150*time.Millisecond)
+		relayDone <- [2]uint64{up, down}
+	}()
+
+	select {
+	case d := <-playerEOFSeen:
+		if d > 500*time.Millisecond {
+			t.Fatalf("player waited too long (%v) for EOF after server closed", d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("deadlock: player never received EOF when upstream server closed first")
+	}
+
+	select {
+	case counts := <-relayDone:
+		if counts[1] != uint64(len(videoChunk)) {
+			t.Fatalf("expected download bytes %d, got %d", len(videoChunk), counts[1])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("goroutine leak: relayTunnel stuck waiting for idle client upload goroutine")
+	}
+}
+
+func TestBufferSizeCapAndExtractTCPConn(t *testing.T) {
+	prx := &Proxy{
+		Config: &Config{},
+	}
+	prx.Config.Server.Performance.BufferSize = 1048576
+	if got := prx.getBufferSize(); got != MaxCopyBufferSize {
+		t.Fatalf("expected oversized buffer_size to cap at %d, got %d", MaxCopyBufferSize, got)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err == nil {
+			c.Close()
+		}
+	}()
+
+	rawConn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	defer rawConn.Close()
+	<-done
+
+	tlsWrapped := tls.Server(rawConn, &tls.Config{InsecureSkipVerify: true})
+	if extractTCPConn(tlsWrapped) == nil {
+		t.Fatalf("expected extractTCPConn to unwrap *tls.Conn into *net.TCPConn")
 	}
 }
