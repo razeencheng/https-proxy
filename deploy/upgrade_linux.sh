@@ -127,7 +127,23 @@ fi
 # ── Step 5: Fix permissions ──
 echo ""
 echo "=== Step 5: Fixing permissions ==="
+id -u https-proxy &>/dev/null || useradd -r -d "$INSTALL_DIR" -s /bin/false https-proxy
+getent group https-proxy &>/dev/null || groupadd -r https-proxy
 chown -R https-proxy:https-proxy "$INSTALL_DIR"
+if [ -d "$CONFIG_DIR" ]; then
+  chown root:https-proxy "$CONFIG_DIR"
+  chmod 750 "$CONFIG_DIR"
+fi
+if [ -f "$CONFIG_DIR/config.json" ]; then
+  chown root:https-proxy "$CONFIG_DIR/config.json"
+  chmod 640 "$CONFIG_DIR/config.json"
+fi
+CERT_DIR="$CONFIG_DIR/certs"
+if [ -d "$CERT_DIR" ] && [ ! -L "$CERT_DIR" ] && ! mountpoint -q "$CERT_DIR" 2>/dev/null; then
+  chown -R root:https-proxy "$CERT_DIR"
+  chmod 750 "$CERT_DIR"
+  find "$CERT_DIR" -type f -exec chmod 640 {} +
+fi
 echo "Permissions set."
 
 # ── Step 6: Restart service ──

@@ -201,12 +201,17 @@ echo "Setting permissions..."
 chown -R https-proxy:https-proxy "$INSTALL_DIR"
 chown -R https-proxy:https-proxy "$LOG_DIR"
 chmod 755 "$INSTALL_DIR/https-proxy"
+chown root:https-proxy "$CONFIG_DIR"
 chmod 750 "$CONFIG_DIR"
-chmod 640 "$CONFIG_DIR/config.json"
-if [ -d "$CERT_DIR" ] && [ "$(ls -A "$CERT_DIR")" ]; then
-  chmod -R 600 "$CERT_DIR"/*
+if [ -f "$CONFIG_DIR/config.json" ]; then
+  chown root:https-proxy "$CONFIG_DIR/config.json"
+  chmod 640 "$CONFIG_DIR/config.json"
 fi
-chmod 750 "$CERT_DIR"
+if [ -d "$CERT_DIR" ] && [ ! -L "$CERT_DIR" ] && ! mountpoint -q "$CERT_DIR" 2>/dev/null; then
+  chown -R root:https-proxy "$CERT_DIR"
+  chmod 750 "$CERT_DIR"
+  find "$CERT_DIR" -type f -exec chmod 640 {} +
+fi
 
 echo "Installation complete!"
 echo

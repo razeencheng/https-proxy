@@ -180,7 +180,22 @@ finalize() {
 
   # Fix permissions
   if [ "$PLATFORM" = "linux" ]; then
+    id -u https-proxy &>/dev/null || useradd -r -d "$INSTALL_DIR" -s /bin/false https-proxy
+    getent group https-proxy &>/dev/null || groupadd -r https-proxy
     chown -R https-proxy:https-proxy "$INSTALL_DIR" 2>/dev/null || true
+    if [ -d "$CONFIG_DIR" ]; then
+      chown root:https-proxy "$CONFIG_DIR" 2>/dev/null || true
+      chmod 750 "$CONFIG_DIR" 2>/dev/null || true
+    fi
+    if [ -f "$CONFIG_DIR/config.json" ]; then
+      chown root:https-proxy "$CONFIG_DIR/config.json" 2>/dev/null || true
+      chmod 640 "$CONFIG_DIR/config.json" 2>/dev/null || true
+    fi
+    if [ -d "$CONFIG_DIR/certs" ] && [ ! -L "$CONFIG_DIR/certs" ] && ! mountpoint -q "$CONFIG_DIR/certs" 2>/dev/null; then
+      chown -R root:https-proxy "$CONFIG_DIR/certs" 2>/dev/null || true
+      chmod 750 "$CONFIG_DIR/certs" 2>/dev/null || true
+      find "$CONFIG_DIR/certs" -type f -exec chmod 640 {} + 2>/dev/null || true
+    fi
   elif [ "$PLATFORM" = "darwin" ]; then
     chown -R _https-proxy:_https-proxy "$INSTALL_DIR" 2>/dev/null || true
   fi
