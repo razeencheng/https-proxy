@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
@@ -9,6 +10,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -33,36 +36,115 @@ type Proxy struct {
 	GeoIP          *GeoIPService   // GeoIP lookup service
 }
 
-// GzipResponseWriter 提供gzip压缩支持
+// GzipResponseWriter 提供按需gzip压缩支持，避免对已压缩或无响应体的响应重复压缩
 type GzipResponseWriter struct {
-	io.WriteCloser
 	http.ResponseWriter
+	gz          *gzip.Writer
+	wroteHeader bool
+	shouldGzip  bool
+	isHead      bool
 }
 
-// Write 使用gzip压缩写入数据
+func headerContainsToken(h http.Header, key, token string) bool {
+	for _, v := range h.Values(key) {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func statusAllowsBody(statusCode int) bool {
+	return statusCode >= http.StatusOK &&
+		statusCode != http.StatusNoContent &&
+		statusCode != http.StatusNotModified
+}
+
+// WriteHeader 在首次写入响应头时决定是否启用gzip压缩
+func (w *GzipResponseWriter) WriteHeader(statusCode int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+
+	if !w.isHead &&
+		statusAllowsBody(statusCode) &&
+		w.Header().Get("Content-Encoding") == "" &&
+		w.Header().Get("Upgrade") == "" {
+		w.shouldGzip = true
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Encoding", "gzip")
+		if !headerContainsToken(w.Header(), "Vary", "Accept-Encoding") {
+			w.Header().Add("Vary", "Accept-Encoding")
+		}
+		w.gz = gzip.NewWriter(w.ResponseWriter)
+	}
+
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write 使用gzip压缩写入数据（若未压缩则直接透传）
 func (w *GzipResponseWriter) Write(b []byte) (int, error) {
-	return w.WriteCloser.Write(b)
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.shouldGzip {
+		return w.gz.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush 刷新gzip缓冲区和底层ResponseWriter
+func (w *GzipResponseWriter) Flush() {
+	if w.shouldGzip && w.gz != nil {
+		_ = w.gz.Flush()
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack 透传底层http.Hijacker能力
+func (w *GzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijacking not supported")
+}
+
+// Unwrap 返回底层http.ResponseWriter供http.ResponseController使用
+func (w *GzipResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // Close 关闭gzip写入器
 func (w *GzipResponseWriter) Close() error {
-	return w.WriteCloser.Close()
+	if w.gz != nil {
+		return w.gz.Close()
+	}
+	return nil
 }
 
-// NewGzipResponseWriter 创建一个新的gzip响应写入器
+// NewGzipResponseWriter 创建一个新的按需gzip响应写入器
 func NewGzipResponseWriter(w http.ResponseWriter) *GzipResponseWriter {
-	// 设置Content-Encoding头
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Set("Vary", "Accept-Encoding")
-
-	// 创建gzip写入器
-	gz := gzip.NewWriter(w)
-
-	// 返回包装的响应写入器
 	return &GzipResponseWriter{
-		WriteCloser:    gz,
 		ResponseWriter: w,
 	}
+}
+
+func wrapCompressionHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect || !headerContainsToken(r.Header, "Accept-Encoding", "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gzw := NewGzipResponseWriter(w)
+		gzw.isHead = r.Method == http.MethodHead
+		defer gzw.Close()
+		next.ServeHTTP(gzw, r)
+	})
 }
 
 func main() {
@@ -172,23 +254,7 @@ func main() {
 
 	// 如果配置中启用了压缩，则添加压缩中间件
 	if cfg.Server.Performance.EnableCompression {
-		// 使用压缩处理器包装原始处理器
-		compressedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 检查Accept-Encoding头是否包含gzip
-			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-				// 创建gzip响应写入器
-				gzw := NewGzipResponseWriter(w)
-				defer gzw.Close()
-
-				// 使用gzip响应写入器
-				prx.ServeHTTP(gzw, r)
-			} else {
-				// 不支持压缩，使用原始处理器
-				prx.ServeHTTP(w, r)
-			}
-		})
-
-		server.Handler = compressedHandler
+		server.Handler = wrapCompressionHandler(prx)
 	}
 
 	// Start the admin panel server (if configured)
@@ -344,35 +410,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) proxyUnauthorizedRequest(w http.ResponseWriter, r *http.Request) {
-	url := p.Config.Proxy.DefaultSite + r.RequestURI
-	req, err := http.NewRequest(r.Method, url, r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Page not found"))
-		fmt.Println("newRequest: ", err)
+	target, err := url.Parse(p.Config.Proxy.DefaultSite)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		http.Error(w, "Page not found", http.StatusNotFound)
+		log.Printf("Invalid default_site %q: %v", p.Config.Proxy.DefaultSite, err)
 		return
 	}
 
-	// Copy headers from the original request
-	for k, v := range r.Header {
-		req.Header[k] = v
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = target.Host
+		},
+		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+			log.Printf("proxyUnauthorizedRequest error: %v", err)
+			http.Error(rw, "Page not found", http.StatusNotFound)
+		},
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Println("do: ", err)
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Page not found"))
-		return
-	}
-	defer resp.Body.Close()
-
-	for k, v := range resp.Header {
-		w.Header()[k] = v
-	}
-	w.WriteHeader(resp.StatusCode)
-
-	io.Copy(w, resp.Body)
+	rp.ServeHTTP(w, r)
 }
 
 // 获取配置的缓冲区大小，如果配置中未指定，则使用默认值
